@@ -1099,7 +1099,9 @@ function createMoveControl() {
 
     moveControl = new Table(Styles.black3);
     moveControl.name = "drag-scheme-table-control";
-    moveButton = moveControl.button("MOVE", Styles.defaultt, () => {
+    const moveButtonStyle = new Packages.arc.scene.ui.TextButton.TextButtonStyle(Styles.defaultt);
+    moveButtonStyle.checked = moveButtonStyle.over;
+    moveButton = moveControl.button("MOVE", moveButtonStyle, () => {
         moveMode = !moveMode;
         deleteMode = false;
         selectedSlot = null;
