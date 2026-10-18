@@ -4,6 +4,7 @@
 
 - This is a script-only Mindustry mod extending Salivion's Extended UI schematic table. Keep the install workflow to one mod package; do not add a Java build or separate JAR requirement.
 - Preserve the existing table-to-table move behavior, settings keys, and `[Drag from Scheme Table]` log prefix.
+- The user exclusively controls all version changes. Never change version metadata or version strings in source, manifests, or documentation unless the user explicitly requests that change.
 - Do not modify Mindustry, Extended UI, or any other mod. Mindustry and Arc source may be read as references.
 - Distinguish source-confirmed behavior from runtime behavior that has not been tested.
 
@@ -21,6 +22,16 @@
 - Visual table-to-table dragging can be disabled while click-to-select/click-to-move remains available.
 - The vanilla-library-to-table feature uses a stationary hold of about 0.4 seconds, then shows a pointer-following preview. Empty destinations insert; occupied destinations ask for confirmation; drops outside the table do nothing.
 - Preserve normal vanilla schematic-card clicks and nested info/export/edit/delete controls.
+
+## Delete-mode selection: current runtime findings
+
+- The user confirmed in-game that Delete mode and selected schematic slots highlight correctly. The selected slot uses the same appearance as the normal hover highlight; preserve this behavior.
+- Multi-selection, the confirmation list, and deletion of all selected slots have been confirmed working in-game.
+- A multi-delete bug repeatedly processed the first selected slot despite looping over the selection. Explicit per-iteration `var` values for the selected key and associated data fixed it in Rhino. Preserve this approach in the deletion and post-rebuild verification loops unless an alternative is runtime-tested.
+- Each selected slot is deleted independently, including its slot-specific custom image. Keep the confirmation snapshot, stale-slot checks, and table refresh consistent with that behavior.
+- Cancel/Escape/Back clears selection and exits Delete mode without enabling MOVE. Confirmation also clears selection and exits Delete mode.
+- Diagnostic logs are gated by the persistent `drag-scheme-table.show-debug-logs` preference, defaulting to enabled; errors and warnings remain visible when routine diagnostics are disabled. Temporary highlight diagnostics can be removed when no longer needed, but preserve the actual style/state logic in `updateHighlight()`.
+- A prior crash was caused by an `exit` callback invoking a diagnostic helper after it had been commented out. The obsolete callback was removed; avoid leaving calls to removed or commented-out helpers.
 
 ## Current library-drag implementation and performance goal
 

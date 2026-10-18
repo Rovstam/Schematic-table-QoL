@@ -2,7 +2,7 @@
     "name": "Schematic table QoL",
     "displayName": "Schematic table QoL",
     "author": "Rovstam",
-    "description": "Move schematics between table slots and drag them from the library into the Extended UI table.",
+    "description": "Move, delete, and drag schematics in the Extended UI table.",
     "version": "1.0.3",
     "minGameVersion": "158.1",
     "dependencies": ["extended-ui"],
