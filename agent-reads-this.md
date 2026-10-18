@@ -48,22 +48,27 @@
 - The on-demand target path has passed a user in-game test: the library drag preview appears. Continue verifying actual slot drop, occupied-slot confirmation, cancellation, nested controls, and ordinary schematic click behavior.
 - Do not reintroduce recurring or open-time full-dialog scans. Preserve normal card clicks, nested info/export/edit/delete actions, hold/movement thresholds, preview, drops, confirmation, cancellation, and the existing EUI table MOVE/swap behavior.
 
-## Current library feature plan: show schematic icon tags in table slots
+## Library icon-tag selection: implemented, runtime verification pending
 
-- The immediate focus is to make an inserted schematic's vanilla icon tags available as the image shown in its Extended UI table slot. This is not text translation and does not modify the schematic's tags.
-- Vanilla stores both icon tags and arbitrary text tags in `Schematic.labels`. A schematic can have a mixture of both; offer only tags that represent displayable icons. Ignore text/custom-name tags, even if their text resembles an icon name. Do not use a regex that strips letters or other text heuristics to classify tags.
-- If there is one displayable icon tag, use it automatically. If there are multiple, ask which icon to use with a prompt naming the schematic and show only its displayable icon-tag choices. Do not show text-only tags as choices.
-- When the user chooses an icon, save the schematic name to the destination slot as usual and save the matching Extended UI icon identifier to that slot's existing `<slot-key>image` setting, then rebuild the table. Resolve vanilla icon-tag values to identifiers/drawables using exact icon/content mappings; do not assume the raw tag string is already an Extended UI icon identifier.
-- If there are no displayable icon tags, retain the existing insertion behavior. If the user cancels an icon-choice prompt, do not insert or modify the destination. Preserve the existing occupied-slot confirmation flow and do not overwrite slot data before the required confirmations/selections are complete.
-- The current drag resolves the actual schematic from `SchematicsDialog.SchematicImage`; use that `Schematic` object's labels for icon choices, not the card preview or its rendered image.
-- Keep the selection UI event-driven and scoped to the insertion interaction. Do not add recurring scans or expensive per-frame work for tag/icon discovery.
-- Verify in game with no icon tags, one icon tag, multiple icon tags mixed with text tags, prompt cancellation, and occupied-slot confirmation. Confirm the selected icon and schematic name both appear in the intended slot and that ordinary library clicks and table MOVE behavior remain unchanged.
+- Library insertion now inspects the dropped `Schematic` object's labels and offers its vanilla icon tags as the image for the destination table slot. This is not text translation and does not modify schematic tags.
+- Icon tags are classified by exact vanilla values, not regex or text heuristics: UI icon glyphs are matched against `Vars.accessibleIcons` and `Iconc.codes`; content emoji are matched against visible, unlocked content in `Vars.defaultContentIcons`, as in vanilla's icon-tag picker. Text/custom-name tags are excluded even if they resemble an icon name.
+- A single matching icon tag is applied automatically. Multiple matches open a prompt naming the schematic and showing only matching icon choices; canceling leaves the destination unchanged.
+- On insertion, the schematic name is saved as before and a chosen icon's Extended UI identifier is saved in the destination's `<slot-key>image` setting. With no matching icon tags, the prior insertion behavior is retained. Occupied-slot confirmation still runs after icon selection and before settings are changed.
+- Discovery runs only after a library drop, not in a recurring scan or per-frame update.
+- Drop-scoped icon diagnostics log raw label strings and UTF-16 code units, exact UI/content icon matches (including content rejected as hidden, locked, or missing `uiIcon`), final choices, and the slot image setting write/readback. These use the existing detailed-log toggle; enable it when investigating icon matching or display failures.
+- The code has syntax/whitespace checks only. In-game validation remains necessary for no/one/multiple icon tags, mixed text and icon tags, cancellation, occupied-slot confirmation, displayed slot icon/name, ordinary library clicks, and table MOVE behavior.
 
 ## Future library feature: multi-select/batch insertion
 
 - Multi-select from the vanilla library and placing multiple schematics into the EUI table remains a separate future feature; do not implement it as part of the icon-tag work.
 - Keep schematic data (`Schematic` objects) distinct from card icons/previews. Preserve the current one-at-a-time drag interaction and table MOVE behavior.
 - A future batch-placement feature needs explicit rules for destination order, occupied slots and confirmation, preserving or replacing existing schematics, and what happens when the selected count exceeds available slots. Do not overwrite current slots implicitly.
+
+## Maintainability and deferred refactoring
+
+- `scripts/main.js` is large, but splitting its features into separate script modules is not currently considered worthwhile: library drag/insertion, table binding, MOVE, Delete, settings, dialogs, and highlights share mutable state and callbacks.
+- Keep related sections organized in `main.js` for now rather than extracting files just to reduce line count. Do not change behavior solely to refactor.
+- If future growth makes an extraction valuable, start with the cohesive library drag/insertion flow and define explicit dependencies for table lookup/drop handling, settings, feedback, and refresh. Avoid duplicated state or broad mechanical moves; verify the Rhino module-loading pattern first.
 
 ## Extended UI integration
 

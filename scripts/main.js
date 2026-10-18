@@ -331,7 +331,99 @@ function refreshSchematicTable() {
     }
 }
 
-function insertLibrarySchematic(schematic, destination, expectedDestination) {
+function describeLibraryTag(tag) {
+    const codeUnits = [];
+    for (let i = 0; i < tag.length; i++) {
+        const hex = tag.charCodeAt(i).toString(16).toUpperCase();
+        codeUnits.push("U+" + ("0000" + hex).slice(-4));
+    }
+    return JSON.stringify(tag) + " [" + codeUnits.join(" ") + "]";
+}
+
+function getLibraryIconChoices(schematic) {
+    const choicesByTag = Object.create(null);
+    const labels = schematic.labels;
+    const labelValues = Object.create(null);
+    const choices = [];
+    const iconMatchDiagnostics = [];
+    const rawLabels = [];
+
+    for (let i = 0; i < labels.size; i++) {
+        const tag = String(labels.get(i));
+        labelValues[tag] = true;
+        rawLabels.push(describeLibraryTag(tag));
+    }
+    dbg("Library schematic tags for \"" + schematic.name() + "\": " +
+        (rawLabels.length === 0 ? "(none)" : rawLabels.join(", ")) + ".");
+
+    const accessibleIcons = Vars.accessibleIcons;
+    for (let i = 0; i < accessibleIcons.length; i++) {
+        const iconName = String(accessibleIcons[i]);
+        const iconCode = Number(Packages.mindustry.gen.Iconc.codes.get(iconName, 0));
+        if (iconCode === 0) continue;
+
+        const tag = String.fromCharCode(iconCode);
+        if (!labelValues[tag]) continue;
+        if (!Icon.icons.containsKey(iconName)) {
+            iconMatchDiagnostics.push("UI " + describeLibraryTag(tag) + " -> " +
+                iconName + " (Icon.icons entry missing)");
+            continue;
+        }
+        iconMatchDiagnostics.push("UI " + describeLibraryTag(tag) + " -> " + iconName);
+        choicesByTag[tag] = {
+            tag: tag,
+            imageName: iconName,
+            drawable: new Packages.arc.scene.style.TextureRegionDrawable(Icon.icons.get(iconName)),
+            tooltip: iconName
+        };
+    }
+
+    for (let typeIndex = 0; typeIndex < Vars.defaultContentIcons.length; typeIndex++) {
+        const contentType = Vars.defaultContentIcons[typeIndex];
+        const contents = Vars.content.getBy(contentType);
+        for (let contentIndex = 0; contentIndex < contents.size; contentIndex++) {
+            const content = contents.get(contentIndex);
+            if (!content.hasEmoji()) continue;
+
+            const tag = String(content.emoji());
+            if (!labelValues[tag]) continue;
+            if (content.isHidden() || !content.unlockedNow() || content.uiIcon == null) {
+                const reasons = [];
+                if (content.isHidden()) reasons.push("hidden");
+                if (!content.unlockedNow()) reasons.push("locked");
+                if (content.uiIcon == null) reasons.push("uiIcon missing");
+                iconMatchDiagnostics.push("Content " + describeLibraryTag(tag) + " -> " +
+                    String(content.localizedName) + " rejected (" + reasons.join(", ") + ")");
+                continue;
+            }
+            iconMatchDiagnostics.push("Content " + describeLibraryTag(tag) + " -> " +
+                String(content.localizedName));
+            choicesByTag[tag] = {
+                tag: tag,
+                imageName: String(content.name),
+                drawable: new Packages.arc.scene.style.TextureRegionDrawable(content.uiIcon),
+                tooltip: String(content.localizedName)
+            };
+        }
+    }
+
+    for (let i = 0; i < labels.size; i++) {
+        const choice = choicesByTag[String(labels.get(i))];
+        if (choice != null) choices.push(choice);
+    }
+
+    dbg("Library icon-tag lookup for \"" + schematic.name() + "\": " +
+        (iconMatchDiagnostics.length === 0
+            ? "no exact vanilla icon matches"
+            : iconMatchDiagnostics.join("; ")) +
+        ". Final choices: " +
+        (choices.length === 0
+            ? "(none)"
+            : choices.map(choice => choice.imageName).join(", ")) + ".");
+    return choices;
+}
+
+function insertLibrarySchematic(schematic, destination, expectedDestination, iconChoice) {
     const currentDestination = Core.settings.getString(destination, "");
     if (currentDestination !== expectedDestination) {
         announceMoveMessage(Core.bundle.get("drag-scheme-table.library-insert-stale"));
@@ -340,13 +432,102 @@ function insertLibrarySchematic(schematic, destination, expectedDestination) {
     }
 
     Core.settings.put(destination, schematic.name());
+    if (iconChoice != null) {
+        const imageKey = destination + "image";
+        Core.settings.put(imageKey, iconChoice.imageName);
+        dbg("Library slot image setting " + imageKey + " write=\"" + iconChoice.imageName +
+            "\", readback=\"" + Core.settings.getString(imageKey, "") + "\".");
+    } else {
+        dbg("Library insertion has no selected icon; existing slot image setting " +
+            destination + "image=\"" + Core.settings.getString(destination + "image", "") + "\".");
+    }
     selectedSlot = null;
     announceMoveMessage(Core.bundle.get("drag-scheme-table.library-insert-complete"));
-    dbg("Inserted library schematic " + schematic.name() + " into " + destination + ".");
+    dbg("Inserted library schematic " + schematic.name() + " into " + destination +
+        (iconChoice == null ? "." : " with icon " + iconChoice.imageName + "."));
     refreshSchematicTable();
 }
 
-function showLibraryInsertConfirm(schematic, destination, expectedDestination) {
+function continueLibraryInsert(schematic, destination, expectedDestination, iconChoice) {
+    const currentDestination = Core.settings.getString(destination, "");
+    if (currentDestination !== expectedDestination) {
+        announceMoveMessage(Core.bundle.get("drag-scheme-table.library-insert-stale"));
+        dbg("Library insertion canceled because destination " + destination + " changed.");
+        return;
+    }
+
+    if (expectedDestination && !skipSwapConfirmations) {
+        showLibraryInsertConfirm(schematic, destination, expectedDestination, iconChoice);
+    } else {
+        insertLibrarySchematic(schematic, destination, expectedDestination, iconChoice);
+    }
+}
+
+function showLibraryIconChoice(schematic, destination, expectedDestination, choices) {
+    if (libraryInsertConfirmationOpen) return;
+    clearMoveAnnouncement();
+
+    const dialog = new BaseDialog(Core.bundle.get("drag-scheme-table.library-icon-title"));
+    let choiceMade = false;
+    dialog.setFillParent(false);
+    dialog.cont.add(Core.bundle.format(
+        "drag-scheme-table.library-icon-message",
+        schematic.name()
+    )).width(Vars.mobile ? 400 : 500).wrap().pad(4).get()
+        .setAlignment(Align.center, Align.center);
+    dialog.cont.row();
+    dialog.cont.pane(options => {
+        const columns = Vars.mobile ? 4 : 8;
+        options.left();
+        for (let i = 0; i < choices.length; i++) {
+            const choice = choices[i];
+            options.button(choice.drawable, Styles.flati, 40, () => {
+                if (choiceMade) return;
+                choiceMade = true;
+                libraryInsertConfirmationOpen = false;
+                dialog.hide();
+                continueLibraryInsert(schematic, destination, expectedDestination, choice);
+            }).size(56).tooltip(choice.tooltip);
+            if ((i + 1) % columns === 0) options.row();
+        }
+    }).width(Vars.mobile ? 360 : 520).maxHeight(Core.graphics.getHeight() * 0.7).scrollX(false);
+
+    dialog.hidden(() => {
+        libraryInsertConfirmationOpen = false;
+        if (!choiceMade) {
+            announceMoveMessage(Core.bundle.get("drag-scheme-table.library-insert-cancelled"));
+            dbg("Library icon selection canceled; destination unchanged.");
+        }
+    });
+
+    dialog.buttons.defaults().size(200, 54).pad(2);
+    dialog.buttons.button("@cancel", Icon.cancel, () => dialog.hide());
+    dialog.keyDown(Packages.arc.input.KeyCode.escape, () => dialog.hide());
+    dialog.keyDown(Packages.arc.input.KeyCode.back, () => dialog.hide());
+    libraryInsertConfirmationOpen = true;
+    try {
+        dialog.show();
+    } catch (error) {
+        libraryInsertConfirmationOpen = false;
+        throw error;
+    }
+}
+
+function requestLibraryInsert(schematic, destination, expectedDestination) {
+    const choices = getLibraryIconChoices(schematic);
+    if (choices.length > 1) {
+        showLibraryIconChoice(schematic, destination, expectedDestination, choices);
+    } else {
+        continueLibraryInsert(
+            schematic,
+            destination,
+            expectedDestination,
+            choices.length === 1 ? choices[0] : null
+        );
+    }
+}
+
+function showLibraryInsertConfirm(schematic, destination, expectedDestination, iconChoice) {
     if (libraryInsertConfirmationOpen) return;
     clearMoveAnnouncement();
 
@@ -373,7 +554,7 @@ function showLibraryInsertConfirm(schematic, destination, expectedDestination) {
             Core.settings.forceSave();
             dbg("Swap confirmation preference saved.");
         }
-        insertLibrarySchematic(schematic, destination, expectedDestination);
+        insertLibrarySchematic(schematic, destination, expectedDestination, iconChoice);
     };
 
     dialog.hidden(() => {
@@ -417,15 +598,7 @@ function finishLibraryDrag(drag, stageX, stageY) {
     const destination = slotKey(category, index, boundColumns);
     const expectedDestination = Core.settings.getString(destination, "");
     dbg("Library drop at slot " + index + " resolved to " + destination + ".");
-    if (expectedDestination) {
-        if (skipSwapConfirmations) {
-            insertLibrarySchematic(drag.schematic, destination, expectedDestination);
-        } else {
-            showLibraryInsertConfirm(drag.schematic, destination, expectedDestination);
-        }
-    } else {
-        insertLibrarySchematic(drag.schematic, destination, "");
-    }
+    requestLibraryInsert(drag.schematic, destination, expectedDestination);
 }
 
 function updateLibraryDrag() {

@@ -35,6 +35,8 @@ The selected slot is highlighted. You can switch category tabs while a slot is s
 
 While in a game with the Extended UI schematic table enabled, press and hold a schematic card in the library without moving for about 0.4 seconds. When the library closes and its preview follows the pointer, drag it onto a table slot. Empty slots receive the schematic; occupied slots ask for confirmation. Releasing outside a table slot leaves the table unchanged. The library's ordinary click, info, export, edit, and delete actions are left available.
 
+When the schematic has one vanilla icon tag, that icon is used for the table slot automatically. If it has multiple icon tags, choose one in the prompt; text tags are not offered. The schematic name and selected icon are stored in the slot. If it has no icon tags, the existing slot image behavior is unchanged.
+
 **Performance note:** The previous working library-drag implementation caused a severe performance hit in the vanilla schematic library. The current version avoids scanning and binding every card when the library opens, but this optimization still needs in-game performance and drag verification. The table MOVE and swap features are unchanged.
 
 **Enable visual schematic dragging** in **Settings > Extended UI** controls both table-to-table dragging and library insertion. When disabled, table click-to-select/click-to-move continues to work.
