@@ -22,6 +22,14 @@
 - The vanilla-library-to-table feature uses a stationary hold of about 0.4 seconds, then shows a pointer-following preview. Empty destinations insert; occupied destinations ask for confirmation; drops outside the table do nothing.
 - Preserve normal vanilla schematic-card clicks and nested info/export/edit/delete controls.
 
+## Delete-mode selection: current runtime findings
+
+- The user confirmed that the Delete button now highlights correctly while Delete mode is active. Do not change or regress this behavior.
+- Multi-selection, the confirmation list, and the deletion sequence have been reported working in-game. Switching table categories retains the pending selection.
+- The user reports that selected schematic slots still do not retain a visible highlight after selection. The desired appearance is exactly the normal Extended UI slot hover highlight, remaining visible after the pointer moves away.
+- Current implementation copies each live slot button's style and assigns `slotStyle.checked = slotStyle.over`, then checks selected buttons in `updateHighlight()`. This did not produce the expected visible selected-slot highlight at runtime. Do not treat the checked-state/style assignment as a verified fix; investigate how Extended UI/Arc applies hover visuals to these live `ImageButton`s and verify the precise slot actor and visual state in-game.
+- Keep selection clearing on Cancel/Escape/Back and after confirmation. Do not change the mod/script version unless the user explicitly requests it.
+
 ## Current library-drag implementation and performance goal
 
 - For the reusable Rhino UI input-debugging and performance-discovery workflow, see [the Mindustry Rhino Scripts skill](../.github/skills/mindustry-rhino-scripts/SKILL.md). This project note records the mod-specific findings below.

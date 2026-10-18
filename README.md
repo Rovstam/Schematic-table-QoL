@@ -1,11 +1,11 @@
 # Schematic table QoL
 
-This script mod adds schematic rearranging to Salivion's Extended UI schematic table.
+This script mod adds schematic move and delete controls and library-to-table dragging to Salivion's Extended UI schematic table.
 
 ## Version 1.0.3
 
-- Fixed library-card press detection so the library-to-table drag feature works.
-- Known issue: using the vanilla schematic library can cause a severe performance hit. A focused optimization is still needed; existing table MOVE and swap behavior is unaffected.
+- Made Delete mode and selected schematics display a persistent selection border.
+- Added multi-select deletion for schematics in the Extended UI table.
 
 ## Use
 
@@ -21,6 +21,8 @@ https://github.com/user-attachments/assets/3ab606bc-a216-4b56-b3a4-97b2b77aa0e8
 
 3. If the destination is occupied, confirm the swap in the popup.
 4. Click **MOVE** again to return to normal schematic-use behavior.
+
+Click **Delete** to enter Delete mode. The on-screen message explains how to select schematics; selected slots are highlighted, and the Delete button stays highlighted while at least one schematic is selected. Click **Delete** again to review the selected schematic names and confirm deletion. Cancel clears the selection and exits Delete mode without enabling MOVE; confirming removes the schematics and any slot-specific custom images from the table. With no schematics selected, clicking **Delete** again exits Delete mode.
 
 Moves preserve a slot's custom image. Empty destinations receive a move and leave the source empty; occupied destinations are swapped after confirmation. Use **Settings > Extended UI > Skip schematic swap confirmations** to persistently control the confirmation popup. Dismissing the swap popup without confirming clears the selected schematic. Clicking the selected source again cancels the move. Ordinary table clicks are unchanged while move mode is off.
 

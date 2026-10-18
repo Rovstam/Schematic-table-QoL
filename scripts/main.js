@@ -11,13 +11,16 @@ const dragPreviewScale = 1.35;
 const libraryHoldMillis = 400;
 
 let moveMode = false;
+let deleteMode = false;
 let selectedSlot = null;
+let selectedDeleteSlots = [];
 let skipSwapConfirmations = false;
 let visualDragEnabled = true;
 let activeDrag = null;
 let dragPreview = null;
 let moveControl;
 let moveButton;
+let deleteButton;
 let boundTable;
 let attachedTable;
 let boundSlotButtons = [];
@@ -624,6 +627,140 @@ function selectOrMove(category, index, columns) {
     }
 }
 
+function selectOrToggleDelete(category, index, columns) {
+    const key = slotKey(category, index, columns);
+    let selectedIndex = -1;
+    for (let i = 0; i < selectedDeleteSlots.length; i++) {
+        if (selectedDeleteSlots[i].key === key) {
+            selectedIndex = i;
+            break;
+        }
+    }
+    if (selectedIndex >= 0) {
+        selectedDeleteSlots.splice(selectedIndex, 1);
+        updateDeleteButtonHighlight();
+        updateHighlight();
+        dbg("Deselected " + key + " for deletion.");
+        announceMoveMessage(Core.bundle.format(
+            "drag-scheme-table.delete-deselected",
+            selectedDeleteSlots.length
+        ));
+        return;
+    }
+
+    const name = Core.settings.getString(key, "");
+    if (!name) {
+        announceMoveMessage(Core.bundle.get("drag-scheme-table.delete-empty-slot"));
+        return;
+    }
+
+    selectedDeleteSlots.push({
+        key: key,
+        name: name,
+        image: Core.settings.getString(key + "image", "")
+    });
+    updateDeleteButtonHighlight();
+    updateHighlight();
+    dbg("Selected " + key + " (" + name + ") for deletion.");
+    announceMoveMessage(Core.bundle.format(
+        "drag-scheme-table.delete-selected",
+        name,
+        selectedDeleteSlots.length
+    ));
+}
+
+function deleteSelectedSchematics(selection) {
+    let deleted = 0;
+    let stale = 0;
+    for (let i = 0; i < selection.length; i++) {
+        const selected = selection[i];
+        const imageKey = selected.key + "image";
+        if (Core.settings.getString(selected.key, "") !== selected.name ||
+            Core.settings.getString(imageKey, "") !== selected.image) {
+            stale++;
+            continue;
+        }
+        Core.settings.remove(selected.key);
+        Core.settings.remove(imageKey);
+        deleted++;
+    }
+
+    selectedDeleteSlots = [];
+    deleteMode = false;
+    updateDeleteButtonHighlight();
+    updateHighlight();
+    if (deleted > 0) {
+        Core.settings.forceSave();
+        refreshSchematicTable();
+    }
+    moveButton.setChecked(moveMode);
+    deleteButton.setChecked(deleteMode);
+
+    if (stale > 0) {
+        announceMoveMessage(Core.bundle.format(
+            deleted > 0
+                ? "drag-scheme-table.delete-complete-stale"
+                : "drag-scheme-table.delete-stale",
+            deleted,
+            stale
+        ));
+    } else {
+        announceMoveMessage(Core.bundle.format("drag-scheme-table.delete-complete", deleted));
+    }
+    dbg("Deleted " + deleted + " selected schematics; skipped " + stale + " changed slots.");
+}
+
+function showDeleteConfirm() {
+    if (selectedDeleteSlots.length === 0) {
+        deleteMode = false;
+        updateDeleteButtonHighlight();
+        updateHighlight();
+        announceMoveMessage(Core.bundle.get("drag-scheme-table.delete-mode-disabled"));
+        return;
+    }
+
+    clearMoveAnnouncement();
+    const selection = selectedDeleteSlots.slice();
+    const names = [];
+    for (let i = 0; i < selection.length; i++) {
+        names.push("- " + selection[i].name);
+    }
+    const dialog = new BaseDialog(Core.bundle.get("drag-scheme-table.delete-title"));
+    let confirmed = false;
+    dbg("Opened deletion confirmation for " + selection.length + " schematics.");
+    dialog.setFillParent(false);
+    dialog.cont.add(Core.bundle.format(
+        "drag-scheme-table.delete-message",
+        names.join("\n")
+    )).width(Vars.mobile ? 400 : 500).wrap().pad(4).get()
+        .setAlignment(Align.center, Align.center);
+
+    const confirm = () => {
+        if (confirmed) return;
+        confirmed = true;
+        dialog.hide();
+        deleteSelectedSchematics(selection);
+    };
+
+    dialog.hidden(() => {
+        if (!confirmed) {
+            selectedDeleteSlots = [];
+            deleteMode = false;
+            updateDeleteButtonHighlight();
+            updateHighlight();
+            announceMoveMessage(Core.bundle.get("drag-scheme-table.delete-cancelled"));
+            dbg("Schematic deletion cancelled; selection cleared and Delete mode disabled.");
+        }
+    });
+    dialog.buttons.defaults().size(200, 54).pad(2);
+    dialog.buttons.button("@cancel", Icon.cancel, () => dialog.hide());
+    dialog.buttons.button("@ok", Icon.ok, confirm);
+    dialog.keyDown(Packages.arc.input.KeyCode.enter, confirm);
+    dialog.keyDown(Packages.arc.input.KeyCode.escape, () => dialog.hide());
+    dialog.keyDown(Packages.arc.input.KeyCode.back, () => dialog.hide());
+    dialog.show();
+}
+
 function sameButtons(first, second) {
     if (first.length !== second.length) return false;
     for (let i = 0; i < first.length; i++) {
@@ -721,22 +858,30 @@ function bindTableButtons(table) {
 
     for (let i = 0; i < slotButtons.length; i++) {
         const index = i;
+        const slotStyle = new Packages.arc.scene.ui.ImageButton.ImageButtonStyle(
+            slotButtons[i].getStyle()
+        );
+        slotStyle.checked = slotStyle.over;
+        slotButtons[i].setStyle(slotStyle);
         slotButtons[i].addCaptureListener(new JavaAdapter(Packages.arc.scene.event.InputListener, {
             touchDown: function(event, x, y, pointer, button) {
-                if (!moveMode || button != Packages.arc.input.KeyCode.mouseLeft) return false;
-                const category = getSelectedCategory(boundCategoryButtons);
-                const key = slotKey(category, index, boundColumns);
-                activeDrag = {
-                    index: index,
-                    pointer: pointer,
-                    key: key,
-                    name: Core.settings.getString(key, ""),
-                    category: category,
-                    button: slotButtons[index],
-                    startX: event.stageX,
-                    startY: event.stageY,
-                    dragging: false
-                };
+                if ((!moveMode && !deleteMode) ||
+                    button != Packages.arc.input.KeyCode.mouseLeft) return false;
+                if (moveMode) {
+                    const category = getSelectedCategory(boundCategoryButtons);
+                    const key = slotKey(category, index, boundColumns);
+                    activeDrag = {
+                        index: index,
+                        pointer: pointer,
+                        key: key,
+                        name: Core.settings.getString(key, ""),
+                        category: category,
+                        button: slotButtons[index],
+                        startX: event.stageX,
+                        startY: event.stageY,
+                        dragging: false
+                    };
+                }
                 event.stop();
                 return true;
             },
@@ -755,8 +900,21 @@ function bindTableButtons(table) {
                 }
             },
             touchUp: function(event, x, y, pointer, button) {
-                if (!moveMode || button != Packages.arc.input.KeyCode.mouseLeft ||
-                    activeDrag == null || activeDrag.pointer !== pointer) return;
+                if ((!moveMode && !deleteMode) ||
+                    button != Packages.arc.input.KeyCode.mouseLeft) return;
+                if (deleteMode) {
+                    event.stop();
+                    if (x < 0 || y < 0 ||
+                        x > slotButtons[index].getWidth() ||
+                        y > slotButtons[index].getHeight()) return;
+                    selectOrToggleDelete(
+                        getSelectedCategory(boundCategoryButtons),
+                        index,
+                        boundColumns
+                    );
+                    return;
+                }
+                if (activeDrag == null || activeDrag.pointer !== pointer) return;
                 event.stop();
                 const drag = activeDrag;
                 const dx = event.stageX - drag.startX;
@@ -785,10 +943,22 @@ function bindTableButtons(table) {
 function updateHighlight() {
     const category = getSelectedCategory(boundCategoryButtons);
     for (let i = 0; i < boundSlotButtons.length; i++) {
-        const selected = moveMode && selectedSlot != null &&
-            selectedSlot.key === slotKey(category, i, boundColumns);
-        boundSlotButtons[i].color.set(selected ? Pal.accent : Color.white);
+        const key = slotKey(category, i, boundColumns);
+        let selected = moveMode && selectedSlot != null && selectedSlot.key === key;
+        if (deleteMode) {
+            for (let j = 0; j < selectedDeleteSlots.length; j++) {
+                if (selectedDeleteSlots[j].key === key) {
+                    selected = true;
+                    break;
+                }
+            }
+        }
+        boundSlotButtons[i].setChecked(selected);
     }
+}
+
+function updateDeleteButtonHighlight() {
+    if (deleteButton) deleteButton.setChecked(deleteMode);
 }
 
 function createMoveControl() {
@@ -798,13 +968,43 @@ function createMoveControl() {
     moveControl.name = "drag-scheme-table-control";
     moveButton = moveControl.button("MOVE", Styles.defaultt, () => {
         moveMode = !moveMode;
+        deleteMode = false;
         selectedSlot = null;
+        selectedDeleteSlots = [];
         clearVisualDrag();
+        moveButton.setChecked(moveMode);
+        updateDeleteButtonHighlight();
+        updateHighlight();
         dbg("Move mode " + (moveMode ? "ON" : "OFF"));
         announceMoveMessage(Core.bundle.get(moveMode
             ? "drag-scheme-table.mode-enabled"
             : "drag-scheme-table.mode-disabled"));
     }).size(72, 36).tooltip(Core.bundle.get("drag-scheme-table.mode-tooltip")).get();
+    const deleteButtonStyle = new Packages.arc.scene.ui.TextButton.TextButtonStyle(Styles.defaultt);
+    deleteButtonStyle.checked = deleteButtonStyle.over;
+    deleteButton = moveControl.button(
+        Core.bundle.get("drag-scheme-table.delete-button"),
+        deleteButtonStyle,
+        () => {
+            if (!deleteMode) {
+                deleteMode = true;
+                moveMode = false;
+                selectedSlot = null;
+                selectedDeleteSlots = [];
+                clearVisualDrag();
+                moveButton.setChecked(moveMode);
+                updateDeleteButtonHighlight();
+                updateHighlight();
+                announceMoveMessage(
+                    Core.bundle.get("drag-scheme-table.delete-mode-enabled") + "\n" +
+                    Core.bundle.get("drag-scheme-table.delete-mode-instruction")
+                );
+                dbg("Delete mode ON.");
+            } else {
+                showDeleteConfirm();
+            }
+        }
+    ).size(72, 36).tooltip(Core.bundle.get("drag-scheme-table.delete-tooltip")).get();
 
     moveControl.pack();
     moveControl.visibility = () => {
@@ -850,7 +1050,11 @@ Events.on(ClientLoadEvent, () => {
                     clearVisualDrag();
                     if (libraryCandidate != null) cancelLibraryDrag(true);
                     selectedSlot = null;
+                    selectedDeleteSlots = [];
                     moveMode = false;
+                    deleteMode = false;
+                    moveButton.setChecked(false);
+                    updateDeleteButtonHighlight();
                     return;
                 }
                 if (!table) {
@@ -863,6 +1067,7 @@ Events.on(ClientLoadEvent, () => {
                 waitingLogged = false;
                 bindTableButtons(table);
                 moveButton.setChecked(moveMode);
+                updateDeleteButtonHighlight();
                 updateHighlight();
                 attachMoveControl(table);
                 lastUpdateError = null;
