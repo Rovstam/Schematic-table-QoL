@@ -5,6 +5,7 @@ const columnsSetting = "eui-SchematicsTableColumns";
 const tableName = "eui-schematics-table";
 const skipSwapConfirmationsSetting = "drag-scheme-table.skip-swap-confirmations";
 const visualDragSetting = "drag-scheme-table.visual-drag";
+const showDebugLogsSetting = "drag-scheme-table.show-debug-logs";
 const scriptVersion = "1.0.3";
 const dragThresholdSquared = 64;
 const dragPreviewScale = 1.35;
@@ -16,6 +17,7 @@ let selectedSlot = null;
 let selectedDeleteSlots = [];
 let skipSwapConfirmations = false;
 let visualDragEnabled = true;
+let showDebugLogs = true;
 let activeDrag = null;
 let dragPreview = null;
 let moveControl;
@@ -23,7 +25,11 @@ let moveButton;
 let deleteButton;
 let boundTable;
 let attachedTable;
+let pendingDeletionVerification;
 let boundSlotButtons = [];
+let boundSlotStyles = [];
+let boundSlotDefaultBackgrounds = [];
+let boundSlotDeleteHighlights = [];
 let lastUpdateError;
 let boundCategoryButtons = [];
 let boundColumns = 5;
@@ -41,9 +47,8 @@ let libraryLastUpdateError;
 let libraryInsertConfirmationOpen = false;
 let libraryPressListenerInstalled = false;
 
-const DEBUG = true;
 function dbg(message) {
-    if (DEBUG) Log.info("[Drag from Scheme Table] " + message);
+    if (showDebugLogs) Log.info("[Drag from Scheme Table] " + message);
 }
 
 function announceMoveMessage(message) {
@@ -70,8 +75,6 @@ function clearMoveAnnouncement() {
         lastMoveAnnouncement = null;
     }
 }
-
-dbg("Script evaluated. Version " + scriptVersion + ".");
 
 function findTable() {
     const children = Vars.ui.hudGroup.getChildren();
@@ -126,8 +129,16 @@ function addSwapConfirmationSetting() {
                 Core.settings.forceSave();
             }
         );
+        settingsTable.checkPref(
+            showDebugLogsSetting,
+            true,
+            value => {
+                showDebugLogs = value;
+                Core.settings.forceSave();
+            }
+        );
         swapSettingInstalled = true;
-        dbg("Added swap and visual-drag toggles to Extended UI settings.");
+        dbg("Added swap, visual-drag, and debug-log toggles to Extended UI settings.");
         return;
     }
 
@@ -308,7 +319,13 @@ function findLibraryDropTarget(stageX, stageY) {
 
 function refreshSchematicTable() {
     if (global.eui.schematicsTableUI && global.eui.schematicsTableUI.rebuildTable) {
-        global.eui.schematicsTableUI.rebuildTable();
+        dbg("Requesting Extended UI schematic table rebuild.");
+        try {
+            global.eui.schematicsTableUI.rebuildTable();
+            dbg("Extended UI schematic table rebuild call returned.");
+        } catch (error) {
+            Log.err("[Drag from Scheme Table] Extended UI schematic table rebuild failed: " + error);
+        }
     } else {
         Log.err("[Drag from Scheme Table] schematicsTableUI.rebuildTable missing; table not refreshed.");
     }
@@ -639,7 +656,8 @@ function selectOrToggleDelete(category, index, columns) {
     if (selectedIndex >= 0) {
         selectedDeleteSlots.splice(selectedIndex, 1);
         updateDeleteButtonHighlight();
-        updateHighlight();
+        updateHighlight(key);
+        //logDeleteSlotVisualState(key, index, false);
         dbg("Deselected " + key + " for deletion.");
         announceMoveMessage(Core.bundle.format(
             "drag-scheme-table.delete-deselected",
@@ -656,11 +674,12 @@ function selectOrToggleDelete(category, index, columns) {
 
     selectedDeleteSlots.push({
         key: key,
-        name: name,
-        image: Core.settings.getString(key + "image", "")
+        name: String(name),
+        image: String(Core.settings.getString(key + "image", ""))
     });
     updateDeleteButtonHighlight();
-    updateHighlight();
+    updateHighlight(key);
+    //logDeleteSlotVisualState(key, index, true);
     dbg("Selected " + key + " (" + name + ") for deletion.");
     announceMoveMessage(Core.bundle.format(
         "drag-scheme-table.delete-selected",
@@ -669,20 +688,74 @@ function selectOrToggleDelete(category, index, columns) {
     ));
 }
 
+/* Console messages for debugging the visual state of schematic slot buttons. These are not used in normal operation, but can be helpful for diagnosing issues with button styles or interactions. Enable if highlighting in table breaks.
+function logDeleteSlotVisualState(key, index, selected) {
+    const button = boundSlotButtons[index];
+    const style = button.getStyle();
+    dbg("Delete slot visual state: key=" + key +
+        ", selected=" + selected +
+        ", checked=" + button.isChecked() +
+        ", hovering=" + button.isOver() +
+        ", upMatchesOver=" + (style.up === style.over) +
+        ", overDrawable=" + (style.over != null) +
+        ", checkedDrawable=" + (style.checked != null) + ".");
+}
+
+function logDeleteSlotHighlightOnExit(index) {
+    const category = getSelectedCategory(boundCategoryButtons);
+    const key = slotKey(category, index, boundColumns);
+    for (let i = 0; i < selectedDeleteSlots.length; i++) {
+        if (selectedDeleteSlots[i].key !== key) continue;
+
+        const button = boundSlotButtons[index];
+        const style = button.getStyle();
+        dbg("Delete slot mouse exit: key=" + key +
+            ", checked=" + button.isChecked() +
+            ", hovering=" + button.isOver() +
+            ", upMatchesOver=" + (style.up === style.over) +
+            ", backgroundMatchesUp=" + (button.getBackground() === style.up) +
+            ", hasButtonGroup=" + (button.getButtonGroup() != null) + ".");
+        return;
+    }
+}
+*/
+
 function deleteSelectedSchematics(selection) {
     let deleted = 0;
     let stale = 0;
-    for (let i = 0; i < selection.length; i++) {
-        const selected = selection[i];
-        const imageKey = selected.key + "image";
-        if (Core.settings.getString(selected.key, "") !== selected.name ||
-            Core.settings.getString(imageKey, "") !== selected.image) {
+    const removedSlots = [];
+    dbg("Starting deletion for " + selection.length + " selected schematics.");
+    for (var i = 0; i < selection.length; i++) {
+        var selectedKey = String(selection[i].key);
+        var expectedName = String(selection[i].name);
+        var expectedImage = String(selection[i].image);
+        var imageKey = selectedKey + "image";
+        var currentName = String(Core.settings.getString(selectedKey, ""));
+        var currentImage = String(Core.settings.getString(imageKey, ""));
+        dbg("Checking deletion index " + i + " for " + selectedKey +
+            ": nameMatches=" + (currentName === expectedName) +
+            ", imageMatches=" + (currentImage === expectedImage) + ".");
+        if (currentName !== expectedName || currentImage !== expectedImage) {
             stale++;
+            dbg("Skipped stale deletion for " + selectedKey +
+                ": nameMatches=" + (currentName === expectedName) +
+                ", imageMatches=" + (currentImage === expectedImage) + ".");
             continue;
         }
-        Core.settings.remove(selected.key);
+        Core.settings.remove(selectedKey);
         Core.settings.remove(imageKey);
-        deleted++;
+        var remainingName = String(Core.settings.getString(selectedKey, ""));
+        var remainingImage = String(Core.settings.getString(imageKey, ""));
+        if (remainingName === "" && remainingImage === "") {
+            deleted++;
+            removedSlots.push(selectedKey);
+            dbg("Verified schematic slot removed: " + selectedKey + ".");
+        } else {
+            stale++;
+            Log.err("[Drag from Scheme Table] Schematic slot remained after removal: " +
+                selectedKey + " (nameEmpty=" + (remainingName === "") +
+                ", imageEmpty=" + (remainingImage === "") + ").");
+        }
     }
 
     selectedDeleteSlots = [];
@@ -690,6 +763,10 @@ function deleteSelectedSchematics(selection) {
     updateDeleteButtonHighlight();
     updateHighlight();
     if (deleted > 0) {
+        pendingDeletionVerification = {
+            keys: removedSlots,
+            previousTable: boundTable
+        };
         Core.settings.forceSave();
         refreshSchematicTable();
     }
@@ -710,6 +787,28 @@ function deleteSelectedSchematics(selection) {
     dbg("Deleted " + deleted + " selected schematics; skipped " + stale + " changed slots.");
 }
 
+function verifyDeletedSlotsAfterTableUpdate(table) {
+    if (pendingDeletionVerification == null) return;
+
+    const verification = pendingDeletionVerification;
+    pendingDeletionVerification = null;
+    dbg("Post-rebuild deletion check: tableReplaced=" +
+        (table !== verification.previousTable) +
+        ", visibleSlotButtons=" + boundSlotButtons.length + ".");
+
+    for (var i = 0; i < verification.keys.length; i++) {
+        var key = String(verification.keys[i]);
+        var imageKey = key + "image";
+        var currentName = String(Core.settings.getString(key, ""));
+        var currentImage = String(Core.settings.getString(imageKey, ""));
+        dbg("Post-rebuild slot state index=" + i + ": key=" + key +
+            ", nameExists=" + Core.settings.has(key) +
+            ", name=\"" + currentName +
+            "\", imageExists=" + Core.settings.has(imageKey) +
+            ", image=\"" + currentImage + "\".");
+    }
+}
+
 function showDeleteConfirm() {
     if (selectedDeleteSlots.length === 0) {
         deleteMode = false;
@@ -721,6 +820,8 @@ function showDeleteConfirm() {
 
     clearMoveAnnouncement();
     const selection = selectedDeleteSlots.slice();
+    dbg("Delete confirmation snapshot keys: " +
+        selection.map(selected => selected.key).join(",") + ".");
     const names = [];
     for (let i = 0; i < selection.length; i++) {
         names.push("- " + selection[i].name);
@@ -855,6 +956,9 @@ function bindTableButtons(table) {
     boundCategoryButtons = categoryButtons;
     boundColumns = liveColumns;
     boundSlotButtons = slotButtons;
+    boundSlotStyles = [];
+    boundSlotDefaultBackgrounds = [];
+    boundSlotDeleteHighlights = [];
 
     for (let i = 0; i < slotButtons.length; i++) {
         const index = i;
@@ -863,6 +967,9 @@ function bindTableButtons(table) {
         );
         slotStyle.checked = slotStyle.over;
         slotButtons[i].setStyle(slotStyle);
+        boundSlotStyles.push(slotStyle);
+        boundSlotDefaultBackgrounds.push(slotStyle.up);
+        boundSlotDeleteHighlights.push(false);
         slotButtons[i].addCaptureListener(new JavaAdapter(Packages.arc.scene.event.InputListener, {
             touchDown: function(event, x, y, pointer, button) {
                 if ((!moveMode && !deleteMode) ||
@@ -937,23 +1044,49 @@ function bindTableButtons(table) {
     }
 
     boundTable = table;
-    Log.info("[Drag from Scheme Table] Bound " + slotButtons.length + " schematic slots.");
+    dbg("Bound " + slotButtons.length + " schematic slots.");
 }
 
-function updateHighlight() {
+function updateHighlight(traceKey) {
     const category = getSelectedCategory(boundCategoryButtons);
+    let traceMatched = false;
     for (let i = 0; i < boundSlotButtons.length; i++) {
         const key = slotKey(category, i, boundColumns);
-        let selected = moveMode && selectedSlot != null && selectedSlot.key === key;
+        const moveSelected = moveMode && selectedSlot != null && selectedSlot.key === key;
+        let deleteSelected = false;
         if (deleteMode) {
             for (let j = 0; j < selectedDeleteSlots.length; j++) {
                 if (selectedDeleteSlots[j].key === key) {
-                    selected = true;
+                    deleteSelected = true;
                     break;
                 }
             }
         }
-        boundSlotButtons[i].setChecked(selected);
+        if (boundSlotDeleteHighlights[i] !== deleteSelected) {
+            const style = boundSlotStyles[i];
+            style.up = deleteSelected ? style.over : boundSlotDefaultBackgrounds[i];
+            boundSlotButtons[i].setStyle(style);
+            boundSlotDeleteHighlights[i] = deleteSelected;
+        }
+        boundSlotButtons[i].setChecked(moveSelected || deleteSelected);
+        if (key === traceKey) {
+            const button = boundSlotButtons[i];
+            const style = button.getStyle();
+            dbg("Delete highlight update: key=" + traceKey +
+                ", category=" + category +
+                ", index=" + i +
+                ", selectionMatch=" + deleteSelected +
+                ", trackedHighlight=" + boundSlotDeleteHighlights[i] +
+                ", upMatchesOver=" + (style.up === style.over) +
+                ", checked=" + button.isChecked() + ".");
+            traceMatched = true;
+        }
+    }
+    if (traceKey != null && !traceMatched) {
+        dbg("Delete highlight update: selected key=" + traceKey +
+            " has no matching visible slot (category=" + category +
+            ", columns=" + boundColumns +
+            ", selectedKeys=" + selectedDeleteSlots.map(slot => slot.key).join(",") + ").");
     }
 }
 
@@ -1026,6 +1159,8 @@ function attachMoveControl(table) {
 }
 
 Events.on(ClientLoadEvent, () => {
+    showDebugLogs = Core.settings.getBool(showDebugLogsSetting, true);
+    dbg("Script evaluated. Version " + scriptVersion + ".");
     dbg("ClientLoadEvent received.");
     try {
         if (!global.eui || !global.eui.registerUpdate) {
@@ -1033,7 +1168,7 @@ Events.on(ClientLoadEvent, () => {
             return;
         }
         createMoveControl();
-        Log.info("[Drag from Scheme Table] Loaded v" + scriptVersion + ".");
+        dbg("Loaded v" + scriptVersion + ".");
 
         skipSwapConfirmations = Core.settings.getBool(skipSwapConfirmationsSetting, false);
         dbg("Swap confirmation preference " + (skipSwapConfirmations ? "loaded as disabled." : "enabled."));
@@ -1066,6 +1201,7 @@ Events.on(ClientLoadEvent, () => {
                 }
                 waitingLogged = false;
                 bindTableButtons(table);
+                verifyDeletedSlotsAfterTableUpdate(table);
                 moveButton.setChecked(moveMode);
                 updateDeleteButtonHighlight();
                 updateHighlight();

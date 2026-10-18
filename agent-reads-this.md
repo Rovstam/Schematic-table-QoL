@@ -4,6 +4,7 @@
 
 - This is a script-only Mindustry mod extending Salivion's Extended UI schematic table. Keep the install workflow to one mod package; do not add a Java build or separate JAR requirement.
 - Preserve the existing table-to-table move behavior, settings keys, and `[Drag from Scheme Table]` log prefix.
+- The user exclusively controls all version changes. Never change version metadata or version strings in source, manifests, or documentation unless the user explicitly requests that change.
 - Do not modify Mindustry, Extended UI, or any other mod. Mindustry and Arc source may be read as references.
 - Distinguish source-confirmed behavior from runtime behavior that has not been tested.
 
@@ -24,11 +25,13 @@
 
 ## Delete-mode selection: current runtime findings
 
-- The user confirmed that the Delete button now highlights correctly while Delete mode is active. Do not change or regress this behavior.
-- Multi-selection, the confirmation list, and the deletion sequence have been reported working in-game. Switching table categories retains the pending selection.
-- The user reports that selected schematic slots still do not retain a visible highlight after selection. The desired appearance is exactly the normal Extended UI slot hover highlight, remaining visible after the pointer moves away.
-- Current implementation copies each live slot button's style and assigns `slotStyle.checked = slotStyle.over`, then checks selected buttons in `updateHighlight()`. This did not produce the expected visible selected-slot highlight at runtime. Do not treat the checked-state/style assignment as a verified fix; investigate how Extended UI/Arc applies hover visuals to these live `ImageButton`s and verify the precise slot actor and visual state in-game.
-- Keep selection clearing on Cancel/Escape/Back and after confirmation. Do not change the mod/script version unless the user explicitly requests it.
+- The user confirmed in-game that Delete mode and selected schematic slots highlight correctly. The selected slot uses the same appearance as the normal hover highlight; preserve this behavior.
+- Multi-selection, the confirmation list, and deletion of all selected slots have been confirmed working in-game.
+- A multi-delete bug repeatedly processed the first selected slot despite looping over the selection. Explicit per-iteration `var` values for the selected key and associated data fixed it in Rhino. Preserve this approach in the deletion and post-rebuild verification loops unless an alternative is runtime-tested.
+- Each selected slot is deleted independently, including its slot-specific custom image. Keep the confirmation snapshot, stale-slot checks, and table refresh consistent with that behavior.
+- Cancel/Escape/Back clears selection and exits Delete mode without enabling MOVE. Confirmation also clears selection and exits Delete mode.
+- Diagnostic logs are gated by the persistent `drag-scheme-table.show-debug-logs` preference, defaulting to enabled; errors and warnings remain visible when routine diagnostics are disabled. Temporary highlight diagnostics can be removed when no longer needed, but preserve the actual style/state logic in `updateHighlight()`.
+- A prior crash was caused by an `exit` callback invoking a diagnostic helper after it had been commented out. The obsolete callback was removed; avoid leaving calls to removed or commented-out helpers.
 
 ## Current library-drag implementation and performance goal
 

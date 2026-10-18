@@ -6,6 +6,7 @@ This script mod adds schematic move and delete controls and library-to-table dra
 
 - Made Delete mode and selected schematics display a persistent selection border.
 - Added multi-select deletion for schematics in the Extended UI table.
+- Added a setting to show or hide detailed diagnostic log messages.
 
 ## Use
 
@@ -22,13 +23,13 @@ https://github.com/user-attachments/assets/3ab606bc-a216-4b56-b3a4-97b2b77aa0e8
 3. If the destination is occupied, confirm the swap in the popup.
 4. Click **MOVE** again to return to normal schematic-use behavior.
 
-Click **Delete** to enter Delete mode. The on-screen message explains how to select schematics; selected slots are highlighted, and the Delete button stays highlighted while at least one schematic is selected. Click **Delete** again to review the selected schematic names and confirm deletion. Cancel clears the selection and exits Delete mode without enabling MOVE; confirming removes the schematics and any slot-specific custom images from the table. With no schematics selected, clicking **Delete** again exits Delete mode.
+Click **Delete** to enter Delete mode. The on-screen message explains how to select schematics; selected slots use the same highlight as hovering, and the Delete button is highlighted while Delete mode is active. Select multiple slots if desired, then click **Delete** again to review their names and confirm deletion. Each selected slot is deleted independently, along with its slot-specific custom image. Cancel clears the selection and exits Delete mode without enabling MOVE. With no schematics selected, clicking **Delete** again exits Delete mode.
 
 Moves preserve a slot's custom image. Empty destinations receive a move and leave the source empty; occupied destinations are swapped after confirmation. Use **Settings > Extended UI > Skip schematic swap confirmations** to persistently control the confirmation popup. Dismissing the swap popup without confirming clears the selected schematic. Clicking the selected source again cancels the move. Ordinary table clicks are unchanged while move mode is off.
 
 In MOVE mode, hold and drag a schematic to see an outlined floating preview. Drop it on an empty slot to move it, or on an occupied slot to open the swap confirmation. Dropping outside the schematic slots leaves everything unchanged.
 
-The selected slot is highlighted. You can switch category tabs while a slot is selected to move a schematic across categories. Debug logging is on; check the Mindustry log for `[Drag from Scheme Table]` messages if a stage fails.
+The selected slot is highlighted. You can switch category tabs while a slot is selected to move a schematic across categories. Use **Settings > Extended UI > Show diagnostic log messages** to control detailed `[Drag from Scheme Table]` messages; errors and warnings remain visible when this option is off.
 
 ## Insert from the schematic library
 
