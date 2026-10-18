@@ -11,7 +11,7 @@
 ## Project structure
 
 - Entry point: `scripts/main.js`
-- Manifest: `mod.hjson`, currently version `1.0.3`, `java: false`, `script: true`, dependency `extended-ui`.
+- Manifest: `mod.hjson`, currently version `1.0.4`, `java: false`, `script: true`, dependency `extended-ui`.
 - `JavaAdapter` in `main.js` is Rhino interop for Arc listeners and does not imply a Java build.
 
 ## Existing functionality to preserve
@@ -48,12 +48,22 @@
 - The on-demand target path has passed a user in-game test: the library drag preview appears. Continue verifying actual slot drop, occupied-slot confirmation, cancellation, nested controls, and ordinary schematic click behavior.
 - Do not reintroduce recurring or open-time full-dialog scans. Preserve normal card clicks, nested info/export/edit/delete actions, hold/movement thresholds, preview, drops, confirmation, cancellation, and the existing EUI table MOVE/swap behavior.
 
+## Current library feature plan: show schematic icon tags in table slots
+
+- The immediate focus is to make an inserted schematic's vanilla icon tags available as the image shown in its Extended UI table slot. This is not text translation and does not modify the schematic's tags.
+- Vanilla stores both icon tags and arbitrary text tags in `Schematic.labels`. A schematic can have a mixture of both; offer only tags that represent displayable icons. Ignore text/custom-name tags, even if their text resembles an icon name. Do not use a regex that strips letters or other text heuristics to classify tags.
+- If there is one displayable icon tag, use it automatically. If there are multiple, ask which icon to use with a prompt naming the schematic and show only its displayable icon-tag choices. Do not show text-only tags as choices.
+- When the user chooses an icon, save the schematic name to the destination slot as usual and save the matching Extended UI icon identifier to that slot's existing `<slot-key>image` setting, then rebuild the table. Resolve vanilla icon-tag values to identifiers/drawables using exact icon/content mappings; do not assume the raw tag string is already an Extended UI icon identifier.
+- If there are no displayable icon tags, retain the existing insertion behavior. If the user cancels an icon-choice prompt, do not insert or modify the destination. Preserve the existing occupied-slot confirmation flow and do not overwrite slot data before the required confirmations/selections are complete.
+- The current drag resolves the actual schematic from `SchematicsDialog.SchematicImage`; use that `Schematic` object's labels for icon choices, not the card preview or its rendered image.
+- Keep the selection UI event-driven and scoped to the insertion interaction. Do not add recurring scans or expensive per-frame work for tag/icon discovery.
+- Verify in game with no icon tags, one icon tag, multiple icon tags mixed with text tags, prompt cancellation, and occupied-slot confirmation. Confirm the selected icon and schematic name both appear in the intended slot and that ordinary library clicks and table MOVE behavior remain unchanged.
+
 ## Future library feature: multi-select/batch insertion
 
-- Multi-select from the vanilla library and placing multiple schematics into the EUI table is a separate future feature, not part of the immediate performance fix.
-- Keep schematic data (`Schematic` objects) distinct from card icons/previews. The current drag resolves the actual schematic from `SchematicsDialog.SchematicImage`; preserve this separation if a collection of selected schematics is introduced later.
+- Multi-select from the vanilla library and placing multiple schematics into the EUI table remains a separate future feature; do not implement it as part of the icon-tag work.
+- Keep schematic data (`Schematic` objects) distinct from card icons/previews. Preserve the current one-at-a-time drag interaction and table MOVE behavior.
 - A future batch-placement feature needs explicit rules for destination order, occupied slots and confirmation, preserving or replacing existing schematics, and what happens when the selected count exceeds available slots. Do not overwrite current slots implicitly.
-- Design the current single-schematic insertion so future collection/batch handling can be added without replacing the existing one-at-a-time drag interaction or table MOVE behavior.
 
 ## Extended UI integration
 
