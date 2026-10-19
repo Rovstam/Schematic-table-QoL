@@ -7,6 +7,7 @@ This script mod adds schematic move and delete controls and library-to-table dra
 - Made Delete mode and selected schematics display a persistent selection border.
 - Added multi-select deletion for schematics in the Extended UI table.
 - Added a setting to show or hide detailed diagnostic log messages.
+- Schematic drag from Vanilla UI now Displays a message asking what Tag should be used for the Table's icon.
 
 ## Use
 
