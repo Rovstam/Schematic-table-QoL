@@ -11,7 +11,7 @@
 ## Project structure
 
 - Entry point: `scripts/main.js`
-- Manifest: `mod.hjson`, currently version `1.0.3`, `java: false`, `script: true`, dependency `extended-ui`.
+- Manifest: `mod.hjson`, currently version `1.0.4`, `java: false`, `script: true`, dependency `extended-ui`.
 - `JavaAdapter` in `main.js` is Rhino interop for Arc listeners and does not imply a Java build.
 
 ## Existing functionality to preserve
@@ -48,12 +48,27 @@
 - The on-demand target path has passed a user in-game test: the library drag preview appears. Continue verifying actual slot drop, occupied-slot confirmation, cancellation, nested controls, and ordinary schematic click behavior.
 - Do not reintroduce recurring or open-time full-dialog scans. Preserve normal card clicks, nested info/export/edit/delete actions, hold/movement thresholds, preview, drops, confirmation, cancellation, and the existing EUI table MOVE/swap behavior.
 
+## Library icon-tag selection: implemented, runtime verification pending
+
+- Library insertion now inspects the dropped `Schematic` object's labels and offers its vanilla icon tags as the image for the destination table slot. This is not text translation and does not modify schematic tags.
+- Icon tags are classified by exact vanilla values, not regex or text heuristics: UI icon glyphs are matched against `Vars.accessibleIcons` and `Iconc.codes`; content emoji are matched against visible, unlocked content in `Vars.defaultContentIcons`, as in vanilla's icon-tag picker. Text/custom-name tags are excluded even if they resemble an icon name.
+- A single matching icon tag is applied automatically. Multiple matches open a prompt naming the schematic and showing only matching icon choices; canceling leaves the destination unchanged.
+- On insertion, the schematic name is saved as before and a chosen icon's Extended UI identifier is saved in the destination's `<slot-key>image` setting. With no matching icon tags, the prior insertion behavior is retained. Occupied-slot confirmation still runs after icon selection and before settings are changed.
+- Discovery runs only after a library drop, not in a recurring scan or per-frame update.
+- Drop-scoped icon diagnostics log raw label strings and UTF-16 code units, exact UI/content icon matches (including content rejected as hidden, locked, or missing `uiIcon`), final choices, and the slot image setting write/readback. These use the existing detailed-log toggle; enable it when investigating icon matching or display failures.
+- The code has syntax/whitespace checks only. In-game validation remains necessary for no/one/multiple icon tags, mixed text and icon tags, cancellation, occupied-slot confirmation, displayed slot icon/name, ordinary library clicks, and table MOVE behavior.
+
 ## Future library feature: multi-select/batch insertion
 
-- Multi-select from the vanilla library and placing multiple schematics into the EUI table is a separate future feature, not part of the immediate performance fix.
-- Keep schematic data (`Schematic` objects) distinct from card icons/previews. The current drag resolves the actual schematic from `SchematicsDialog.SchematicImage`; preserve this separation if a collection of selected schematics is introduced later.
+- Multi-select from the vanilla library and placing multiple schematics into the EUI table remains a separate future feature; do not implement it as part of the icon-tag work.
+- Keep schematic data (`Schematic` objects) distinct from card icons/previews. Preserve the current one-at-a-time drag interaction and table MOVE behavior.
 - A future batch-placement feature needs explicit rules for destination order, occupied slots and confirmation, preserving or replacing existing schematics, and what happens when the selected count exceeds available slots. Do not overwrite current slots implicitly.
-- Design the current single-schematic insertion so future collection/batch handling can be added without replacing the existing one-at-a-time drag interaction or table MOVE behavior.
+
+## Maintainability and deferred refactoring
+
+- `scripts/main.js` is large, but splitting its features into separate script modules is not currently considered worthwhile: library drag/insertion, table binding, MOVE, Delete, settings, dialogs, and highlights share mutable state and callbacks.
+- Keep related sections organized in `main.js` for now rather than extracting files just to reduce line count. Do not change behavior solely to refactor.
+- If future growth makes an extraction valuable, start with the cohesive library drag/insertion flow and define explicit dependencies for table lookup/drop handling, settings, feedback, and refresh. Avoid duplicated state or broad mechanical moves; verify the Rhino module-loading pattern first.
 
 ## Extended UI integration
 
