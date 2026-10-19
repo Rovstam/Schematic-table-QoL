@@ -39,6 +39,23 @@ function create(operations) {
             rectangle.right + "," + rectangle.top + "]";
     }
 
+    function describeSlots(slots) {
+        const descriptions = [];
+        for (let i = 0; i < slots.length; i++) {
+            descriptions.push(slots[i].index + ":" + slots[i].key +
+                "=" + JSON.stringify(slots[i].name));
+        }
+        return descriptions.join(";");
+    }
+
+    function describeBounds(start, stride, count) {
+        const descriptions = [];
+        for (let i = 0; i < count; i++) {
+            descriptions.push(formatRectangle(cachedBounds[start + i * stride]));
+        }
+        return descriptions.join(";");
+    }
+
     function announceResult(result) {
         if (result.rectangle) {
             operations.announce(
@@ -104,26 +121,24 @@ function create(operations) {
         }
         if (buttons.length < columns) return null;
 
-        const columnCenters = [];
-        const rowCenters = [];
         const columnBounds = [];
         const rowBounds = [];
         const rows = Math.ceil(buttons.length / columns);
 
         for (let column = 0; column < columns; column++) {
-            const bounds = cachedBounds[column];
-            columnCenters.push((bounds.left + bounds.right) / 2);
-            columnBounds.push({ left: bounds.left, right: bounds.right });
+            columnBounds.push({
+                left: cachedBounds[column].left,
+                right: cachedBounds[column].right
+            });
         }
         for (let row = 0; row < rows; row++) {
-            const bounds = cachedBounds[row * columns];
-            rowCenters.push((bounds.bottom + bounds.top) / 2);
-            rowBounds.push({ bottom: bounds.bottom, top: bounds.top });
+            rowBounds.push({
+                bottom: cachedBounds[row * columns].bottom,
+                top: cachedBounds[row * columns].top
+            });
         }
 
         return {
-            columnCenters: columnCenters,
-            rowCenters: rowCenters,
             columnBounds: columnBounds,
             rowBounds: rowBounds
         };
@@ -133,29 +148,71 @@ function create(operations) {
         return cachedGrid;
     }
 
-    function nearestIndex(values, value) {
-        let selected = 0;
-        let distance = Infinity;
-        for (let i = 0; i < values.length; i++) {
-            const currentDistance = Math.abs(values[i] - value);
-            if (currentDistance < distance) {
+    function indexFromBounds(value, length, descending, axis, trace) {
+        let selected = -1;
+
+        for (let i = 0; i < length; i++) {
+            if (descending
+                ? value >= cachedBounds[i * columns].bottom &&
+                    value <= cachedBounds[i * columns].top
+                : value >= cachedBounds[i].left &&
+                    value <= cachedBounds[i].right) {
                 selected = i;
-                distance = currentDistance;
+                break;
             }
+        }
+
+        if (selected < 0) {
+            for (let i = 0; i < length - 1; i++) {
+                if (descending) {
+                    if (value < cachedBounds[i * columns].bottom &&
+                        value > cachedBounds[(i + 1) * columns].top) {
+                        selected = value >
+                            (cachedBounds[i * columns].bottom +
+                                cachedBounds[(i + 1) * columns].top) / 2
+                            ? i
+                            : i + 1;
+                        break;
+                    }
+                } else if (value > cachedBounds[i].right &&
+                    value < cachedBounds[i + 1].left) {
+                    selected = value <
+                        (cachedBounds[i].right + cachedBounds[i + 1].left) / 2
+                        ? i
+                        : i + 1;
+                    break;
+                }
+            }
+        }
+
+        if (selected < 0) {
+            selected = descending
+                ? (value > cachedBounds[0].top ? 0 : length - 1)
+                : (value < cachedBounds[0].left ? 0 : length - 1);
+        }
+
+        if (trace) {
+            operations.log("Bulk grid direct-bounds lookup: axis=" + axis +
+                ", value=" + value + ", descending=" + descending +
+                ", selected=" + selected + ", bounds=" +
+                formatRectangle(cachedBounds[descending
+                    ? selected * columns
+                    : selected]) + ".");
         }
         return selected;
     }
 
-    function gridPosition(button, localX, localY) {
+    function gridPositionAt(x, y, trace) {
         const grid = slotGrid();
-        if (grid == null || button == null) return null;
-
-        const point = button.localToAscendantCoordinates(
-            table,
-            new Vec2(localX, localY)
+        if (grid == null) return null;
+        const column = indexFromBounds(x, columns, false, "column", trace);
+        const row = indexFromBounds(
+            y,
+            grid.rowBounds.length,
+            true,
+            "row",
+            trace
         );
-        const column = nearestIndex(grid.columnCenters, point.x);
-        const row = nearestIndex(grid.rowCenters, point.y);
         const index = row * columns + column;
         if (index < 0 || index >= buttons.length) return null;
         return {
@@ -163,41 +220,50 @@ function create(operations) {
             column: column,
             row: row,
             grid: grid,
-            localX: point.x,
-            localY: point.y
+            localX: x,
+            localY: y
         };
     }
 
-    function cellRectangle(first, last) {
-        const minColumn = Math.min(first.column, last.column);
-        const maxColumn = Math.max(first.column, last.column);
-        const minRow = Math.min(first.row, last.row);
-        const maxRow = Math.max(first.row, last.row);
-        const grid = first.grid;
+    function gridPosition(button, localX, localY, trace) {
+        if (button == null) return null;
+        const point = button.localToAscendantCoordinates(
+            table,
+            new Vec2(localX, localY)
+        );
+        return gridPositionAt(point.x, point.y, trace);
+    }
 
-        let left = grid.columnBounds[minColumn].left;
-        let right = grid.columnBounds[maxColumn].right;
-        if (minColumn > 0) {
-            left = (grid.columnBounds[minColumn - 1].right +
-                grid.columnBounds[minColumn].left) / 2;
-        }
-        if (maxColumn < grid.columnBounds.length - 1) {
-            right = (grid.columnBounds[maxColumn].right +
-                grid.columnBounds[maxColumn + 1].left) / 2;
-        }
+    function indexAtTablePoint(x, y) {
+        if (cachedGrid == null || cachedBounds.length === 0) return -1;
+        const rows = cachedGrid.rowBounds.length;
+        const left = cachedBounds[0].left;
+        const right = cachedBounds[columns - 1].right;
+        const top = cachedBounds[0].top;
+        const bottom = cachedBounds[(rows - 1) * columns].bottom;
+        if (x < left || x > right || y < bottom || y > top) return -1;
+        const position = gridPositionAt(x, y, false);
+        return position == null ? -1 : position.index;
+    }
 
-        let top = grid.rowBounds[minRow].top;
-        let bottom = grid.rowBounds[maxRow].bottom;
-        if (minRow > 0) {
-            top = (grid.rowBounds[minRow - 1].bottom +
-                grid.rowBounds[minRow].top) / 2;
+    function appendRectangleSlot(selected, category, index) {
+        const slot = slotAt(category, index);
+        if (slot != null && slot.name && findSlot(selected, slot.key) < 0) {
+            selected.push(slot);
+        } else if (slot != null && slot.name) {
+            operations.log("Ignored duplicate slot while building bulk rectangle: index=" +
+                index + ", key=" + slot.key + ", category=" + category + ".");
         }
-        if (maxRow < grid.rowBounds.length - 1) {
-            bottom = (grid.rowBounds[maxRow].bottom +
-                grid.rowBounds[maxRow + 1].top) / 2;
-        }
+    }
 
-        return { left: left, bottom: bottom, right: right, top: top };
+    function appendRectangleSlotIfInside(
+        selected, category, index, minColumn, maxColumn, minRow, maxRow
+    ) {
+        const row = Math.floor(index / columns);
+        const column = index % columns;
+        if (row < minRow || row > maxRow ||
+            column < minColumn || column > maxColumn) return;
+        appendRectangleSlot(selected, category, index);
     }
 
     function slotsInRectangle(category, first, last) {
@@ -205,17 +271,41 @@ function create(operations) {
         const minColumn = Math.min(first.column, last.column);
         const maxColumn = Math.max(first.column, last.column);
         const minRow = Math.min(first.row, last.row);
-        const maxRow = Math.max(first.row, last.row);
+        const maxRow = Math.min(
+            Math.max(first.row, last.row),
+            Math.ceil(buttons.length / columns) - 1
+        );
+        const firstIndex = minRow * columns + minColumn;
+        const lastIndex = Math.min(
+            buttons.length - 1,
+            maxRow * columns + maxColumn
+        );
 
-        for (let row = minRow; row <= maxRow; row++) {
-            for (let column = minColumn; column <= maxColumn; column++) {
-                const index = row * columns + column;
-                if (index >= buttons.length) continue;
-                const slot = slotAt(category, index);
-                if (slot != null && slot.name) selected.push(slot);
-            }
+        for (let index = firstIndex; index <= lastIndex; index++) {
+            appendRectangleSlotIfInside(
+                selected,
+                category,
+                index,
+                minColumn,
+                maxColumn,
+                minRow,
+                maxRow
+            );
         }
         return selected;
+    }
+
+    function cellRectangle(first, last) {
+        const minColumn = Math.min(first.column, last.column);
+        const maxColumn = Math.max(first.column, last.column);
+        const minRow = Math.min(first.row, last.row);
+        const maxRow = Math.max(first.row, last.row);
+        return {
+            left: cachedBounds[minRow * columns + minColumn].left,
+            bottom: cachedBounds[maxRow * columns + minColumn].bottom,
+            right: cachedBounds[minRow * columns + maxColumn].right,
+            top: cachedBounds[minRow * columns + minColumn].top
+        };
     }
 
     function drawRectangle(rectangle, backColor, frontColor, offsetX, offsetY) {
@@ -307,18 +397,15 @@ function create(operations) {
             const first = cachedBounds.length > 0 ? cachedBounds[0] : null;
             const last = cachedBounds.length > 0 ? cachedBounds[cachedBounds.length - 1] : null;
             operations.log("Bulk grid geometry: columns=" + columns +
-                ", rows=" + (cachedGrid == null ? 0 : cachedGrid.rowCenters.length) +
+                ", rows=" + (cachedGrid == null ? 0 : cachedGrid.rowBounds.length) +
                 ", firstSlot=" + formatRectangle(first) +
                 ", lastSlot=" + formatRectangle(last) +
-                ", firstRowBounds=" + cachedBounds.slice(0, columns)
-                    .map(formatRectangle).join(";") +
-                ", firstColumnBounds=" + cachedBounds.filter((bounds, index) =>
-                    index % columns === 0
-                ).map(formatRectangle).join(";") +
-                ", columnCenters=" +
-                (cachedGrid == null ? "null" : cachedGrid.columnCenters.join(",")) +
-                ", rowCenters=" +
-                (cachedGrid == null ? "null" : cachedGrid.rowCenters.join(",")) + ".");
+                ", firstRowBounds=" + describeBounds(0, 1, columns) +
+                ", firstColumnBounds=" + describeBounds(
+                    0,
+                    columns,
+                    Math.ceil(buttons.length / columns)
+                ) + ".");
         }
     }
 
@@ -335,6 +422,7 @@ function create(operations) {
             return false;
         }
 
+        const startPoint = gridPosition(button, x, y, true);
         activeSelection = {
             mode: mode,
             category: category,
@@ -345,12 +433,18 @@ function create(operations) {
             lastX: x,
             lastY: y,
             dragging: false,
-            start: { column: index % columns, row: Math.floor(index / columns), grid: grid }
+            start: {
+                column: index % columns,
+                row: Math.floor(index / columns),
+                grid: grid
+            }
         };
         lastRectangle = null;
-        const startPoint = gridPosition(button, x, y);
+        const clicked = slotAt(category, index);
         operations.log("Started " + mode + " selection gesture: category=" + category +
-            ", slot=" + index + ", pointer=" + pointer + ", local=(" +
+            ", slot=" + index + ", key=" + (clicked == null ? "null" : clicked.key) +
+            ", name=" + JSON.stringify(clicked == null ? "" : clicked.name) +
+            ", pointer=" + pointer + ", local=(" +
             x + "," + y + "), tablePoint=(" +
             (startPoint == null ? "null" : startPoint.localX + "," + startPoint.localY) +
             "), stage=(" + event.stageX + "," + event.stageY + "), cell=(" +
@@ -374,7 +468,7 @@ function create(operations) {
         activeSelection.lastX = x;
         activeSelection.lastY = y;
         if (activeSelection.dragging) {
-            const current = gridPosition(button, x, y);
+            const current = gridPosition(button, x, y, activated);
             activeSelection.rectangle = current == null
                 ? null
                 : cellRectangle(activeSelection.start, current);
@@ -399,7 +493,7 @@ function create(operations) {
         activeSelection = null;
 
         if (completed.dragging) {
-            const end = gridPosition(button, x, y);
+            const end = gridPosition(button, x, y, true);
             if (end == null) {
                 operations.log("Bulk selection finished without an endpoint cell: mode=" +
                     completed.mode + ", category=" + completed.category +
@@ -430,7 +524,9 @@ function create(operations) {
                 "), endpointStage=(" + event.stageX + "," + event.stageY +
                 "), endpointSlot=" + end.index +
                 ", rectangle=" + formatRectangle(rectangle) +
-                ", populatedSlots=" + slots.length + ", persistent=true.");
+                ", populatedSlots=" + slots.length +
+                ", selectedSlots=[" + describeSlots(slots) +
+                "], persistent=true.");
             announceResult(result);
             return result;
         }
@@ -447,11 +543,21 @@ function create(operations) {
         const selection = slotsFor(completed.mode);
         lastRectangle = null;
         const existing = findSlot(selection, clicked.key);
+        operations.log("Bulk selection toggle before update: mode=" + completed.mode +
+            ", category=" + completed.category + ", key=" + clicked.key +
+            ", name=" + JSON.stringify(clicked.name) +
+            ", selectedBefore=" + (existing >= 0) +
+            ", selectionIndexBefore=" + existing +
+            ", selectedSlotsBefore=[" + describeSlots(selection) + "].");
         if (existing >= 0) {
             selection.splice(existing, 1);
         } else {
             selection.push(clicked);
         }
+        operations.log("Bulk selection toggle after update: mode=" + completed.mode +
+            ", key=" + clicked.key + ", selectedAfter=" +
+            (findSlot(selection, clicked.key) >= 0) +
+            ", selectedSlotsAfter=[" + describeSlots(selection) + "].");
         notify(completed.mode);
         const result = {
             mode: completed.mode,
@@ -488,86 +594,226 @@ function create(operations) {
         if (mode == null || mode === "delete") notify("delete");
     }
 
+    function validateMoves(moves) {
+        for (let i = 0; i < moves.length; i++) {
+            const move = moves[i];
+            const currentSourceName = operations.getName(move.source.key);
+            const currentSourceImage = operations.getImage(move.source.key + "image");
+            const currentDestinationName = operations.getName(move.destination);
+            const currentDestinationImage = operations.getImage(move.destination + "image");
+            if (currentSourceName !== move.source.name ||
+                currentSourceImage !== move.source.image ||
+                currentDestinationName !== move.expectedDestination ||
+                currentDestinationImage !== move.expectedDestinationImage) {
+                operations.announce("drag-scheme-table.bulk-move-stale");
+                operations.log("Bulk move rejected because source or destination " +
+                    move.source.key + " -> " + move.destination + " changed: " +
+                    "sourceExpected=(" + JSON.stringify(move.source.name) + "," +
+                    JSON.stringify(move.source.image) + "), sourceCurrent=(" +
+                    JSON.stringify(currentSourceName) + "," +
+                    JSON.stringify(currentSourceImage) + "), destinationExpected=(" +
+                    JSON.stringify(move.expectedDestination) + "," +
+                    JSON.stringify(move.expectedDestinationImage) +
+                    "), destinationCurrent=(" + JSON.stringify(currentDestinationName) +
+                    "," + JSON.stringify(currentDestinationImage) + ").");
+                return false;
+            }
+        }
+        return true;
+    }
+
+    function removeMoveSource(move) {
+        operations.log("Bulk move removing source: index=" + move.source.index +
+            ", key=" + move.source.key + ", name=" +
+            JSON.stringify(move.source.name) + ", image=" +
+            JSON.stringify(move.source.image) + ".");
+        operations.remove(move.source.key);
+        operations.remove(move.source.key + "image");
+    }
+
+    function writeMoveDestination(move) {
+        operations.put(move.destination, move.source.name);
+        operations.remove(move.destination + "image");
+        if (move.source.image) {
+            operations.put(move.destination + "image", move.source.image);
+        }
+        operations.log("Bulk move destination write: index=" +
+            move.destinationIndex + ", key=" + move.destination +
+            ", nameWritten=" + JSON.stringify(move.source.name) +
+            ", imageWritten=" + JSON.stringify(move.source.image) +
+            ", nameReadback=" +
+            JSON.stringify(operations.getName(move.destination)) +
+            ", imageReadback=" +
+            JSON.stringify(operations.getImage(move.destination + "image")) + ".");
+    }
+
+    function commitMoves(moves) {
+        if (!validateMoves(moves)) return;
+        operations.log("Bulk move commit started for " + moves.length + " mappings.");
+        let changed = false;
+        for (let i = 0; i < moves.length; i++) {
+            if (moves[i].source.key !== moves[i].destination) changed = true;
+            removeMoveSource(moves[i]);
+        }
+        for (let i = 0; i < moves.length; i++) {
+            writeMoveDestination(moves[i]);
+        }
+
+        clear("move");
+        if (changed) {
+            operations.save();
+            operations.refresh(moves);
+        }
+        operations.announce("drag-scheme-table.bulk-move-complete");
+        operations.log("Moved " + moves.length + " selected schematics as a group.");
+    }
+
     function moveSelected(category, destinationIndex, slotColumns, rowCount) {
         const selection = moveSlots.slice();
         if (selection.length === 0) return;
+        const sourceDescriptions = [];
+        for (let i = 0; i < selection.length; i++) {
+            sourceDescriptions.push(selection[i].index + ":" + selection[i].key +
+                "=" + JSON.stringify(selection[i].name) +
+                " image=" + JSON.stringify(selection[i].image) +
+                " cell=(" + selection[i].column + "," + selection[i].row + ")");
+        }
+        operations.log("Bulk move source snapshot: count=" + selection.length +
+            ", slots=[" + sourceDescriptions.join(";") + "].");
 
         let minColumn = slotColumns;
         let minRow = rowCount;
         const sourceKeys = Object.create(null);
         const targetKeys = Object.create(null);
         const moves = [];
+        const overwrittenNames = [];
 
         for (let i = 0; i < selection.length; i++) {
-            const slot = selection[i];
-            minColumn = Math.min(minColumn, slot.column);
-            minRow = Math.min(minRow, slot.row);
-            sourceKeys[slot.key] = true;
+            minColumn = Math.min(minColumn, selection[i].column);
+            minRow = Math.min(minRow, selection[i].row);
+            markMoveSource(sourceKeys, selection[i]);
         }
 
         const destinationColumn = destinationIndex % slotColumns;
         const destinationRow = Math.floor(destinationIndex / slotColumns);
         for (let i = 0; i < selection.length; i++) {
-            const source = selection[i];
-            const column = destinationColumn + source.column - minColumn;
-            const row = destinationRow + source.row - minRow;
-            if (column < 0 || column >= slotColumns || row < 0 || row >= rowCount) {
-                operations.announce("drag-scheme-table.bulk-move-out-of-bounds");
-                operations.log("Bulk move rejected because the selection would extend beyond the table.");
-                return;
-            }
+            if (!appendMoveForSource(
+                moves,
+                overwrittenNames,
+                selection[i],
+                category,
+                minColumn,
+                minRow,
+                destinationColumn,
+                destinationRow,
+                slotColumns,
+                rowCount,
+                sourceKeys,
+                targetKeys
+            )) return;
+        }
 
-            const destination = operations.slotKey(category, row * slotColumns + column, slotColumns);
-            if (targetKeys[destination]) {
-                operations.announce("drag-scheme-table.bulk-move-overlap");
-                operations.log("Bulk move rejected because multiple selected slots map to " + destination + ".");
-                return;
-            }
-            targetKeys[destination] = true;
-            moves.push({
-                source: source,
-                destination: destination,
-                expectedDestination: operations.getName(destination)
+        if (!validateMoves(moves)) return;
+        if (overwrittenNames.length > 0) {
+            operations.log("Bulk move needs confirmation to overwrite " +
+                overwrittenNames.length + " destination schematics.");
+            operations.confirmBulkOverwrite(overwrittenNames, function() {
+                commitMoves(moves);
             });
+            return;
         }
+        commitMoves(moves);
+    }
 
-        for (let i = 0; i < moves.length; i++) {
-            const move = moves[i];
-            if (operations.getName(move.source.key) !== move.source.name ||
-                operations.getImage(move.source.key + "image") !== move.source.image) {
-                operations.announce("drag-scheme-table.move-stale");
-                operations.log("Bulk move rejected because source " + move.source.key + " changed.");
-                return;
-            }
-            if (move.expectedDestination && !sourceKeys[move.destination]) {
-                operations.announce("drag-scheme-table.bulk-move-occupied");
-                operations.log("Bulk move rejected because destination " + move.destination + " is occupied.");
-                return;
-            }
-        }
+    function markMoveSource(sourceKeys, source) {
+        sourceKeys[source.key] = true;
+    }
 
-        let changed = false;
-        for (let i = 0; i < moves.length; i++) {
-            if (moves[i].source.key !== moves[i].destination) changed = true;
-            operations.remove(moves[i].source.key);
-            operations.remove(moves[i].source.key + "image");
+    function appendMoveForSource(moves, overwrittenNames, source, category,
+        minColumn, minRow, destinationColumn, destinationRow, slotColumns,
+        rowCount, sourceKeys, targetKeys) {
+        const column = destinationColumn + source.column - minColumn;
+        const row = destinationRow + source.row - minRow;
+        if (column < 0 || column >= slotColumns || row < 0 || row >= rowCount) {
+            operations.announce("drag-scheme-table.bulk-move-out-of-bounds");
+            operations.log("Bulk move rejected because the selection would extend beyond the table.");
+            return false;
         }
-        for (let i = 0; i < moves.length; i++) {
-            const move = moves[i];
-            operations.put(move.destination, move.source.name);
-            operations.remove(move.destination + "image");
-            if (move.source.image) {
-                operations.put(move.destination + "image", move.source.image);
-            }
+        const destinationIndex = row * slotColumns + column;
+        const destination = operations.slotKey(category, destinationIndex, slotColumns);
+        if (targetKeys[destination]) {
+            operations.announce("drag-scheme-table.bulk-move-overlap");
+            operations.log("Bulk move rejected because multiple selected slots map to " + destination + ".");
+            return false;
         }
+        targetKeys[destination] = true;
+        const destinationIsSelectedSource = !!sourceKeys[destination];
+        const expectedDestination = operations.getName(destination);
+        const expectedDestinationImage = operations.getImage(destination + "image");
+        moves.push({
+            source: source,
+            category: category,
+            destination: destination,
+            destinationIndex: destinationIndex,
+            expectedDestination: expectedDestination,
+            expectedDestinationImage: expectedDestinationImage
+        });
+        operations.log("Bulk move planned mapping: sourceIndex=" + source.index +
+            ", sourceKey=" + source.key + ", sourceName=" +
+            JSON.stringify(source.name) + ", sourceImage=" +
+            JSON.stringify(source.image) + ", destinationIndex=" +
+            destinationIndex + ", destinationKey=" + destination +
+            ", destinationNameBefore=" + JSON.stringify(expectedDestination) +
+            ", destinationImageBefore=" + JSON.stringify(expectedDestinationImage) +
+            ", destinationIsSelectedSource=" + destinationIsSelectedSource + ".");
+        if (expectedDestination && !destinationIsSelectedSource) {
+            overwrittenNames.push(expectedDestination);
+        }
+        return true;
+    }
 
-        clear("move");
-        if (changed) {
-            operations.save();
-            operations.refresh();
+    function getMoveFootprint() {
+        if (moveSlots.length === 0) return null;
+
+        let minColumn = columns;
+        let minRow = buttons.length;
+        let maxColumn = -1;
+        let maxRow = -1;
+        for (let i = 0; i < moveSlots.length; i++) {
+            const slot = moveSlots[i];
+            minColumn = Math.min(minColumn, slot.column);
+            minRow = Math.min(minRow, slot.row);
+            maxColumn = Math.max(maxColumn, slot.column);
+            maxRow = Math.max(maxRow, slot.row);
         }
-        operations.announce("drag-scheme-table.bulk-move-complete");
-        operations.log("Moved " + moves.length + " selected schematics as a group.");
+        const topLeft = cachedBounds[minRow * columns + minColumn];
+        const bottomLeft = cachedBounds[maxRow * columns + minColumn];
+        const bottomRight = cachedBounds[maxRow * columns + maxColumn];
+        return {
+            slots: moveSlots.slice(),
+            minColumn: minColumn,
+            minRow: minRow,
+            maxColumn: maxColumn,
+            maxRow: maxRow,
+            left: topLeft.left,
+            bottom: bottomLeft.bottom,
+            right: bottomRight.right,
+            top: topLeft.top,
+            width: bottomRight.right - topLeft.left,
+            height: topLeft.top - bottomLeft.bottom
+        };
+    }
+
+    function getMoveOutline() {
+        if (moveSlots.length === 0 || lastRectangle == null ||
+            lastRectangle.mode !== "move" ||
+            lastRectangle.category !== currentCategory) return null;
+        return {
+            left: lastRectangle.rectangle.left,
+            bottom: lastRectangle.rectangle.bottom,
+            right: lastRectangle.rectangle.right,
+            top: lastRectangle.rectangle.top
+        };
     }
 
     function update(mode, category) {
@@ -599,6 +845,9 @@ function create(operations) {
         clear: clear,
         update: update,
         moveSelected: moveSelected,
+        getMoveFootprint: getMoveFootprint,
+        getMoveOutline: getMoveOutline,
+        indexAtTablePoint: indexAtTablePoint,
         bringToFront: bringToFront,
         getMoveSlots: function() { return moveSlots.slice(); },
         getDeleteSlots: function() { return deleteSlots.slice(); }

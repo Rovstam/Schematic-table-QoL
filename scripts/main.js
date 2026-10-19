@@ -10,6 +10,8 @@ const scriptVersion = "1.0.4";
 const dragThresholdSquared = 64;
 const dragPreviewScale = 1.35;
 const libraryHoldMillis = 400;
+let pendingBulkMoveVerification = null;
+let pendingModeOffClick = null;
 const bulkSelection = require("bulk-selection").create({
     slotKey: slotKey,
     getName: key => String(Core.settings.getString(key, "")),
@@ -25,7 +27,11 @@ const bulkSelection = require("bulk-selection").create({
                 : Core.bundle.format(key, first, second)
     ),
     log: message => dbg(message),
-    refresh: () => refreshSchematicTable()
+    confirmBulkOverwrite: (names, confirm) => showBulkMoveConfirm(names, confirm),
+    refresh: moves => {
+        queueBulkMoveVerification(moves);
+        refreshSchematicTable();
+    }
 });
 
 let moveMode = false;
@@ -36,6 +42,12 @@ let visualDragEnabled = true;
 let showDebugLogs = true;
 let activeDrag = null;
 let dragPreview = null;
+let activeBulkDrag = null;
+let bulkDragPreview = null;
+let bulkDragOutline = null;
+let bulkMoveConfirmationOpen = false;
+let bulkOutlineDragTable;
+let bulkOutlineDragListener;
 let moveControl;
 let moveButton;
 let deleteButton;
@@ -137,6 +149,12 @@ function getSlotSelection(category, index, columns) {
     };
 }
 
+function describeSlotKeys(slots) {
+    const keys = [];
+    for (let i = 0; i < slots.length; i++) keys.push(slots[i].key);
+    return keys.join(",");
+}
+
 function getSelectedCategory(categoryButtons) {
     for (let i = 0; i < categoryButtons.length; i++) {
         if (categoryButtons[i].isChecked()) return i;
@@ -199,7 +217,20 @@ function clearVisualDrag() {
         dragPreview.remove();
         dragPreview = null;
     }
+    clearBulkDragPreview();
+    activeBulkDrag = null;
     activeDrag = null;
+}
+
+function clearBulkDragPreview() {
+    if (bulkDragPreview != null) {
+        bulkDragPreview.remove();
+        bulkDragPreview = null;
+    }
+    if (bulkDragOutline != null) {
+        bulkDragOutline.remove();
+        bulkDragOutline = null;
+    }
 }
 
 function clearLibraryDrag() {
@@ -375,6 +406,88 @@ function refreshSchematicTable() {
     } else {
         Log.err("[Drag from Scheme Table] schematicsTableUI.rebuildTable missing; table not refreshed.");
     }
+}
+
+function queueBulkMoveVerification(moves) {
+    const affected = [];
+    function includeSlot(index, category, key, name, image) {
+        for (let i = 0; i < affected.length; i++) {
+            if (affected[i].key !== key) continue;
+            affected[i].index = index;
+            affected[i].category = category;
+            affected[i].expectedName = name;
+            affected[i].expectedImage = image;
+            return;
+        }
+        affected.push({
+            index: index,
+            category: category,
+            key: key,
+            expectedName: name,
+            expectedImage: image
+        });
+    }
+
+    for (let i = 0; i < moves.length; i++) {
+        includeSlot(
+            moves[i].source.index,
+            moves[i].source.category,
+            moves[i].source.key,
+            "",
+            ""
+        );
+    }
+    for (let i = 0; i < moves.length; i++) {
+        includeSlot(
+            moves[i].destinationIndex,
+            moves[i].category,
+            moves[i].destination,
+            moves[i].source.name,
+            moves[i].source.image
+        );
+    }
+    pendingBulkMoveVerification = affected;
+}
+
+function verifyBulkMoveBindings() {
+    if (pendingBulkMoveVerification == null) return;
+    for (let i = 0; i < pendingBulkMoveVerification.length; i++) {
+        const expected = pendingBulkMoveVerification[i];
+        const index = expected.index;
+        const visibleKey = index >= 0 && index < boundSlotButtons.length
+            ? slotKey(expected.category, index, boundColumns)
+            : "out-of-range";
+        const name = String(Core.settings.getString(expected.key, ""));
+        const image = String(Core.settings.getString(expected.key + "image", ""));
+        const button = index >= 0 && index < boundSlotButtons.length
+            ? boundSlotButtons[index]
+            : null;
+        dbg("Post-rebuild bulk move slot: visibleIndex=" + index +
+            ", expectedKey=" + expected.key + ", visibleKey=" + visibleKey +
+            ", expectedName=" + JSON.stringify(expected.expectedName) +
+            ", settingsName=" + JSON.stringify(name) +
+            ", expectedImage=" + JSON.stringify(expected.expectedImage) +
+            ", settingsImage=" + JSON.stringify(image) +
+            ", checked=" + (button == null ? "unavailable" : button.isChecked()) +
+            ", nameMatches=" + (name === expected.expectedName) +
+            ", imageMatches=" + (image === expected.expectedImage) + ".");
+    }
+    pendingBulkMoveVerification = null;
+}
+
+function verifyModeOffClick() {
+    if (pendingModeOffClick == null) return;
+    const click = pendingModeOffClick;
+    pendingModeOffClick = null;
+    const style = click.button.getStyle();
+    dbg("Mode-off schematic click state after table update: key=" + click.key +
+        ", name=" + JSON.stringify(click.name) +
+        ", checkedBefore=" + click.checkedBefore +
+        ", checkedAfter=" + click.button.isChecked() +
+        ", hoveringAfter=" + click.button.isOver() +
+        ", upMatchesOver=" + (style.up === style.over) +
+        ", backgroundMatchesUp=" +
+        (click.button.getBackground() === style.up) + ".");
 }
 
 function describeLibraryTag(tag) {
@@ -745,6 +858,177 @@ function updateDragPreview(stageX, stageY) {
     dragPreview.toFront();
 }
 
+function updateBulkDragPreview(stageX, stageY) {
+    if (!visualDragEnabled || activeBulkDrag == null || activeBulkDrag.previewFailed) return;
+
+    if (bulkDragPreview == null) {
+        const footprint = bulkSelection.getMoveFootprint();
+        if (footprint == null || footprint.slots.length === 0) return;
+        if (boundColumns < 2 || boundSlotButtons.length <= boundColumns) {
+            Log.err("[Drag from Scheme Table] Cannot create bulk drag preview: " +
+                "the live slot grid has fewer than two rows or columns.");
+            activeBulkDrag.previewFailed = true;
+            return;
+        }
+
+        const firstCenter = boundSlotButtons[0].localToAscendantCoordinates(
+            boundTable,
+            new Packages.arc.math.geom.Vec2(
+                boundSlotButtons[0].getWidth() / 2,
+                boundSlotButtons[0].getHeight() / 2
+            )
+        );
+        const nextColumnCenter = boundSlotButtons[1].localToAscendantCoordinates(
+            boundTable,
+            new Packages.arc.math.geom.Vec2(
+                boundSlotButtons[1].getWidth() / 2,
+                boundSlotButtons[1].getHeight() / 2
+            )
+        );
+        const nextRowCenter = boundSlotButtons[boundColumns].localToAscendantCoordinates(
+            boundTable,
+            new Packages.arc.math.geom.Vec2(
+                boundSlotButtons[boundColumns].getWidth() / 2,
+                boundSlotButtons[boundColumns].getHeight() / 2
+            )
+        );
+        const stepX = Math.abs(nextColumnCenter.x - firstCenter.x);
+        const stepY = Math.abs(firstCenter.y - nextRowCenter.y);
+        const cellWidth = boundSlotButtons[0].getWidth();
+        const cellHeight = boundSlotButtons[0].getHeight();
+        if (stepX <= 0 || stepY <= 0 || cellWidth <= 0 || cellHeight <= 0) {
+            Log.err("[Drag from Scheme Table] Cannot create bulk drag preview: " +
+                "slot grid dimensions are invalid.");
+            activeBulkDrag.previewFailed = true;
+            return;
+        }
+        const previewWidth = footprint.width;
+        const previewHeight = footprint.height;
+        if (activeBulkDrag.previewSlotOffsetX == null ||
+            activeBulkDrag.previewSlotOffsetY == null) {
+            const draggedColumn = activeBulkDrag.index % boundColumns;
+            const draggedRow = Math.floor(activeBulkDrag.index / boundColumns);
+            activeBulkDrag.previewSlotOffsetX =
+                (draggedColumn - footprint.minColumn) * stepX + activeBulkDrag.localX;
+            activeBulkDrag.previewSlotOffsetY =
+                (footprint.maxRow - draggedRow) * stepY + activeBulkDrag.localY;
+        }
+        activeBulkDrag.previewWidth = previewWidth;
+        activeBulkDrag.previewHeight = previewHeight;
+        const preview = new Table();
+        preview.touchable = Packages.arc.scene.event.Touchable.disabled;
+        preview.setSize(previewWidth, previewHeight);
+
+        for (let i = 0; i < footprint.slots.length; i++) {
+            const slot = footprint.slots[i];
+            const sourceButton = boundSlotButtons[slot.index];
+            const image = sourceButton.getImage();
+            const drawable = image == null ? null : image.getDrawable();
+            if (drawable == null) {
+                Log.err("[Drag from Scheme Table] Cannot create bulk drag preview: " +
+                    "selected slot " + slot.key + " has no drawable.");
+                activeBulkDrag.previewFailed = true;
+                return;
+            }
+            const previewImage = new Packages.arc.scene.ui.Image(
+                drawable,
+                Packages.arc.util.Scaling.fit
+            );
+            previewImage.touchable = Packages.arc.scene.event.Touchable.disabled;
+            const imageScale = dragPreviewScale * 0.6;
+            const imageWidth = cellWidth * imageScale;
+            const imageHeight = cellHeight * imageScale;
+            previewImage.setSize(imageWidth, imageHeight);
+            preview.addChild(previewImage);
+            previewImage.setPosition(
+                (slot.column - footprint.minColumn) * stepX + (cellWidth - imageWidth) / 2,
+                (footprint.maxRow - slot.row) * stepY + (cellHeight - imageHeight) / 2
+            );
+        }
+
+        const outline = new JavaAdapter(Packages.arc.scene.Element, {
+            draw: function() {
+                const width = this.getWidth();
+                const height = this.getHeight();
+                Lines.stroke(4);
+                Draw.color(Pal.accentBack);
+                Lines.rect(this.x + width / 2, this.y + height / 2, width + 2, height + 2);
+                Lines.stroke(2);
+                Draw.color(Pal.accent);
+                Lines.rect(this.x + width / 2, this.y + height / 2, width, height);
+                Draw.reset();
+            }
+        });
+        outline.touchable = Packages.arc.scene.event.Touchable.disabled;
+        outline.cullable = false;
+        outline.setSize(previewWidth, previewHeight);
+
+        bulkDragPreview = preview;
+        bulkDragOutline = outline;
+        Core.scene.add(bulkDragPreview);
+        Core.scene.add(bulkDragOutline);
+        dbg("Created cursor-following preview for " + footprint.slots.length +
+            " selected schematics (" + previewWidth + "x" + previewHeight +
+            "), dragHandle=" + (activeBulkDrag.outlineHandle
+                ? "selection-outline"
+                : "slot-" + activeBulkDrag.index) +
+            ", pointerOffset=(" + activeBulkDrag.previewSlotOffsetX + "," +
+            activeBulkDrag.previewSlotOffsetY + ").");
+    }
+
+    const left = stageX - activeBulkDrag.previewSlotOffsetX;
+    const bottom = stageY - activeBulkDrag.previewSlotOffsetY;
+    bulkDragPreview.setPosition(left, bottom);
+    bulkDragOutline.setPosition(left, bottom);
+    bulkDragPreview.toFront();
+    bulkDragOutline.toFront();
+}
+
+function showBulkMoveConfirm(overwrittenNames, confirmMove) {
+    if (bulkMoveConfirmationOpen) return;
+    clearMoveAnnouncement();
+
+    const dialog = new BaseDialog(Core.bundle.get("drag-scheme-table.bulk-move-overwrite-title"));
+    let confirmed = false;
+    const names = overwrittenNames.map(name => "- " + name).join("\n");
+    dialog.setFillParent(false);
+    dialog.cont.add(Core.bundle.format(
+        "drag-scheme-table.bulk-move-overwrite-message",
+        names
+    )).width(Vars.mobile ? 400 : 500).wrap().pad(4).get()
+        .setAlignment(Align.center, Align.center);
+
+    const confirm = () => {
+        if (confirmed) return;
+        confirmed = true;
+        dialog.hide();
+        confirmMove();
+    };
+
+    dialog.hidden(() => {
+        bulkMoveConfirmationOpen = false;
+        if (!confirmed) {
+            announceMoveMessage(Core.bundle.get("drag-scheme-table.bulk-move-overwrite-cancelled"));
+            dbg("Bulk move overwrite canceled; no schematics were changed.");
+        }
+    });
+    dialog.buttons.defaults().size(200, 54).pad(2);
+    dialog.buttons.button("@cancel", Icon.cancel, () => dialog.hide());
+    dialog.buttons.button("@ok", Icon.ok, confirm);
+    dialog.keyDown(Packages.arc.input.KeyCode.enter, confirm);
+    dialog.keyDown(Packages.arc.input.KeyCode.escape, () => dialog.hide());
+    dialog.keyDown(Packages.arc.input.KeyCode.back, () => dialog.hide());
+    bulkMoveConfirmationOpen = true;
+    try {
+        dialog.show();
+    } catch (error) {
+        bulkMoveConfirmationOpen = false;
+        throw error;
+    }
+    dbg("Opened bulk move overwrite confirmation for " +
+        overwrittenNames.length + " destination schematics.");
+}
+
 function showSwapConfirm(source, destination, expectedDestination) {
     clearMoveAnnouncement();
     const dialog = new BaseDialog(Core.bundle.get("drag-scheme-table.swap-title"));
@@ -1021,7 +1305,7 @@ function showDeleteConfirm() {
     clearMoveAnnouncement();
     const selection = selectedDeleteSlots;
     dbg("Delete confirmation snapshot keys: " +
-        selection.map(selected => selected.key).join(",") + ".");
+        describeSlotKeys(selection) + ".");
     const names = [];
     for (let i = 0; i < selection.length; i++) {
         names.push("- " + selection[i].name);
@@ -1156,6 +1440,119 @@ function moveSelectedSchematics(category, destinationIndex, columns) {
     selectedSlot = null;
 }
 
+function findBulkOutlineDropTarget(drag, stageX, stageY) {
+    const footprint = bulkSelection.getMoveFootprint();
+    if (footprint == null || drag.previewSlotOffsetX == null ||
+        drag.previewSlotOffsetY == null) return -1;
+
+    const cellWidth = boundSlotButtons[0].getWidth();
+    const cellHeight = boundSlotButtons[0].getHeight();
+    const point = new Packages.arc.math.geom.Vec2(
+        stageX - drag.previewSlotOffsetX + cellWidth / 2,
+        stageY - drag.previewSlotOffsetY + footprint.height - cellHeight / 2
+    );
+    boundTable.stageToLocalCoordinates(point);
+    const destination = bulkSelection.indexAtTablePoint(point.x, point.y);
+    dbg("Bulk outline drop mapping: previewOrigin=(" +
+        (stageX - drag.previewSlotOffsetX) + "," +
+        (stageY - drag.previewSlotOffsetY) + "), tableAnchor=(" +
+        point.x + "," + point.y + "), destination=" + destination + ".");
+    return destination;
+}
+
+function installBulkOutlineDragListener(table) {
+    if (bulkOutlineDragTable === table) return;
+    if (bulkOutlineDragTable != null && bulkOutlineDragListener != null) {
+        bulkOutlineDragTable.removeCaptureListener(bulkOutlineDragListener);
+    }
+
+    bulkOutlineDragTable = table;
+    bulkOutlineDragListener = new JavaAdapter(Packages.arc.scene.event.InputListener, {
+        touchDown: function(event, x, y, pointer, button) {
+            if (button != Packages.arc.input.KeyCode.mouseLeft ||
+                !moveMode || deleteMode || bulkMoveConfirmationOpen ||
+                activeBulkDrag != null) return false;
+
+            const outline = bulkSelection.getMoveOutline();
+            const footprint = bulkSelection.getMoveFootprint();
+            if (outline == null || footprint == null ||
+                x < outline.left || x > outline.right ||
+                y < outline.bottom || y > outline.top) return false;
+
+            activeBulkDrag = {
+                pointer: pointer,
+                startX: event.stageX,
+                startY: event.stageY,
+                dragging: false,
+                outlineHandle: true,
+                previewSlotOffsetX: x - footprint.left,
+                previewSlotOffsetY: y - footprint.bottom,
+                previewWidth: footprint.width,
+                previewHeight: footprint.height
+            };
+            event.stop();
+            dbg("Started bulk outline drag: pointer=(" + x + "," + y +
+                "), selectionBounds=[" + outline.left + "," + outline.bottom +
+                " -> " + outline.right + "," + outline.top +
+                "], groupBounds=[" + footprint.left + "," + footprint.bottom +
+                " -> " + footprint.right + "," + footprint.top +
+                "], selected=" + footprint.slots.length + ".");
+            return true;
+        },
+        touchDragged: function(event, x, y, pointer) {
+            if (activeBulkDrag == null || !activeBulkDrag.outlineHandle ||
+                activeBulkDrag.pointer !== pointer) return;
+            event.stop();
+            const dx = event.stageX - activeBulkDrag.startX;
+            const dy = event.stageY - activeBulkDrag.startY;
+            if (!activeBulkDrag.dragging &&
+                dx * dx + dy * dy >= dragThresholdSquared) {
+                activeBulkDrag.dragging = true;
+                dbg("Bulk selection-outline drag started with " +
+                    bulkSelection.getMoveSlots().length + " schematics.");
+            }
+            if (activeBulkDrag.dragging) {
+                updateBulkDragPreview(event.stageX, event.stageY);
+            }
+        },
+        touchUp: function(event, x, y, pointer, button) {
+            if (activeBulkDrag == null || !activeBulkDrag.outlineHandle ||
+                activeBulkDrag.pointer !== pointer ||
+                button != Packages.arc.input.KeyCode.mouseLeft) return;
+            event.stop();
+            const drag = activeBulkDrag;
+            const dx = event.stageX - drag.startX;
+            const dy = event.stageY - drag.startY;
+            const wasDragged = drag.dragging ||
+                dx * dx + dy * dy >= dragThresholdSquared;
+            clearBulkDragPreview();
+            activeBulkDrag = null;
+            if (!wasDragged) {
+                dbg("Bulk outline handle released without a drag; no move made.");
+                return;
+            }
+
+            const destination = findBulkOutlineDropTarget(
+                drag,
+                event.stageX,
+                event.stageY
+            );
+            if (destination >= 0) {
+                dbg("Dropping bulk outline group at footprint anchor slot " +
+                    destination + ".");
+                moveSelectedSchematics(
+                    getSelectedCategory(boundCategoryButtons),
+                    destination,
+                    boundColumns
+                );
+            } else {
+                dbg("Bulk outline drag ended outside the slot grid; no changes made.");
+            }
+        }
+    });
+    table.addCaptureListener(bulkOutlineDragListener);
+}
+
 function bindTableButtons(table) {
     const rows = Core.settings.getInt(rowsSetting, 4);
     const columns = Core.settings.getInt(columnsSetting, 5);
@@ -1200,6 +1597,8 @@ function bindTableButtons(table) {
         return;
     }
 
+    clearBulkDragPreview();
+    activeBulkDrag = null;
     boundCategoryButtons = categoryButtons;
     boundColumns = liveColumns;
     boundSlotButtons = slotButtons;
@@ -1220,6 +1619,39 @@ function bindTableButtons(table) {
         slotButtons[i].addCaptureListener(new JavaAdapter(Packages.arc.scene.event.InputListener, {
             touchDown: function(event, x, y, pointer, button) {
                 const selectionMode = getBulkSelectionMode();
+                if (button == Packages.arc.input.KeyCode.mouseLeft &&
+                    !moveMode && !deleteMode) {
+                    const category = getSelectedCategory(boundCategoryButtons);
+                    const slot = getSlotSelection(category, index, boundColumns);
+                    const style = slotButtons[index].getStyle();
+                    const targetActor = event.targetActor;
+                    dbg("Mode-off schematic click passed through: category=" + category +
+                        ", index=" + index + ", key=" + slot.key +
+                        ", name=" + JSON.stringify(slot.name) +
+                        ", pointer=" + pointer + ", local=(" + x + "," + y +
+                        "), stage=(" + event.stageX + "," + event.stageY +
+                        "), targetActor=" + (targetActor == null
+                            ? "null"
+                            : String(targetActor.getClass().getName())) +
+                        ", checkedBefore=" + slotButtons[index].isChecked() +
+                        ", hoveringBefore=" + slotButtons[index].isOver() +
+                        ", upMatchesOver=" + (style.up === style.over) +
+                        ", backgroundMatchesUp=" +
+                        (slotButtons[index].getBackground() === style.up) +
+                        ", selectedSlot=" +
+                        (selectedSlot == null ? "none" : selectedSlot.key) +
+                        ", bulkMoveKeys=[" +
+                        describeSlotKeys(bulkSelection.getMoveSlots()) +
+                        "], bulkDeleteKeys=[" +
+                        describeSlotKeys(bulkSelection.getDeleteSlots()) +
+                        "], listenerReturns=false (normal table click continues).");
+                    pendingModeOffClick = {
+                        key: slot.key,
+                        name: slot.name,
+                        button: slotButtons[index],
+                        checkedBefore: slotButtons[index].isChecked()
+                    };
+                }
                 if (button == Packages.arc.input.KeyCode.mouseRight &&
                     (moveMode || deleteMode)) {
                     dbg("Bulk right-button input received: mode=" + selectionMode +
@@ -1243,6 +1675,19 @@ function bindTableButtons(table) {
                 }
                 if ((!moveMode && !deleteMode) ||
                     button != Packages.arc.input.KeyCode.mouseLeft) return false;
+                if (moveMode && bulkSelection.getMoveSlots().length > 0) {
+                    activeBulkDrag = {
+                        pointer: pointer,
+                        index: index,
+                        startX: event.stageX,
+                        startY: event.stageY,
+                        localX: x,
+                        localY: y,
+                        dragging: false
+                    };
+                    event.stop();
+                    return true;
+                }
                 if (moveMode && bulkSelection.getMoveSlots().length === 0) {
                     const category = getSelectedCategory(boundCategoryButtons);
                     const key = slotKey(category, index, boundColumns);
@@ -1262,6 +1707,21 @@ function bindTableButtons(table) {
                 return true;
             },
             touchDragged: function(event, x, y, pointer) {
+                if (activeBulkDrag != null && activeBulkDrag.pointer === pointer) {
+                    event.stop();
+                    const dx = event.stageX - activeBulkDrag.startX;
+                    const dy = event.stageY - activeBulkDrag.startY;
+                    if (!activeBulkDrag.dragging &&
+                        dx * dx + dy * dy >= dragThresholdSquared) {
+                        activeBulkDrag.dragging = true;
+                        dbg("Bulk group drag started with " +
+                            bulkSelection.getMoveSlots().length + " schematics.");
+                    }
+                    if (activeBulkDrag.dragging) {
+                        updateBulkDragPreview(event.stageX, event.stageY);
+                    }
+                    return;
+                }
                 if (bulkSelection.drag(event, pointer, slotButtons[index], x, y)) {
                     event.stop();
                     return;
@@ -1304,6 +1764,22 @@ function bindTableButtons(table) {
                     }
                     event.stop();
                     if (result.mode === "move") selectedSlot = null;
+                    if (result.slot != null) {
+                        const style = slotButtons[index].getStyle();
+                        const selection = result.mode === "move"
+                            ? bulkSelection.getMoveSlots()
+                            : bulkSelection.getDeleteSlots();
+                        dbg("Bulk selection click visual state after update: mode=" +
+                            result.mode + ", key=" + result.slot.key +
+                            ", selected=" + result.selected +
+                            ", selectedKeys=[" +
+                            describeSlotKeys(selection) +
+                            "], checked=" + slotButtons[index].isChecked() +
+                            ", hovering=" + slotButtons[index].isOver() +
+                            ", upMatchesOver=" + (style.up === style.over) +
+                            ", backgroundMatchesUp=" +
+                            (slotButtons[index].getBackground() === style.up) + ".");
+                    }
                     return;
                 }
                 if ((!moveMode && !deleteMode) ||
@@ -1318,6 +1794,23 @@ function bindTableButtons(table) {
                         index,
                         boundColumns
                     );
+                    return;
+                }
+                if (activeBulkDrag != null && activeBulkDrag.pointer === pointer) {
+                    event.stop();
+                    const destination = findDropTarget(event.stageX, event.stageY);
+                    clearBulkDragPreview();
+                    activeBulkDrag = null;
+                    if (destination >= 0) {
+                        dbg("Dropping selected schematic group at slot " + destination + ".");
+                        moveSelectedSchematics(
+                            getSelectedCategory(boundCategoryButtons),
+                            destination,
+                            boundColumns
+                        );
+                    } else {
+                        dbg("Bulk group drag ended outside a schematic slot; no changes made.");
+                    }
                     return;
                 }
                 if (activeDrag == null || activeDrag.pointer !== pointer) {
@@ -1360,6 +1853,7 @@ function bindTableButtons(table) {
     boundSlotTable = slotTable;
     boundConfiguredRows = rows;
     boundConfiguredColumns = columns;
+    installBulkOutlineDragListener(table);
     bulkSelection.bind(
         table,
         slotButtons,
@@ -1371,6 +1865,7 @@ function bindTableButtons(table) {
             updateHighlight();
         }
     );
+    verifyBulkMoveBindings();
     dbg("Bound " + slotButtons.length + " schematic slots.");
 }
 
@@ -1431,7 +1926,7 @@ function updateHighlight(traceKey) {
         dbg("Delete highlight update: selected key=" + traceKey +
             " has no matching visible slot (category=" + category +
             ", columns=" + boundColumns +
-            ", selectedKeys=" + selectedDeleteSlots.map(slot => slot.key).join(",") + ").");
+            ", selectedKeys=" + describeSlotKeys(selectedDeleteSlots) + ").");
     }
     highlightDirty = false;
     highlightedMode = mode;
@@ -1546,6 +2041,7 @@ Events.on(ClientLoadEvent, () => {
 
                 const table = findTable();
                 if (!Core.settings.getBool("eui-ShowSchematicsTable", true)) {
+                    pendingModeOffClick = null;
                     clearVisualDrag();
                     if (libraryCandidate != null) cancelLibraryDrag(true);
                     selectedSlot = null;
@@ -1557,6 +2053,9 @@ Events.on(ClientLoadEvent, () => {
                     return;
                 }
                 if (!table) {
+                    pendingModeOffClick = null;
+                    clearBulkDragPreview();
+                    activeBulkDrag = null;
                     if (!waitingLogged) {
                         dbg("Waiting for table named " + tableName + ".");
                         waitingLogged = true;
@@ -1565,7 +2064,9 @@ Events.on(ClientLoadEvent, () => {
                 }
                 waitingLogged = false;
                 bindTableButtons(table);
+                verifyBulkMoveBindings();
                 verifyDeletedSlotsAfterTableUpdate(table);
+                verifyModeOffClick();
                 if (moveButton.isChecked() !== moveMode) moveButton.setChecked(moveMode);
                 updateDeleteButtonHighlight();
                 updateHighlight();
