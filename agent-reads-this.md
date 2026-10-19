@@ -66,9 +66,21 @@
 
 ## Maintainability and deferred refactoring
 
-- `scripts/main.js` is large, but splitting its features into separate script modules is not currently considered worthwhile: library drag/insertion, table binding, MOVE, Delete, settings, dialogs, and highlights share mutable state and callbacks.
-- Keep related sections organized in `main.js` for now rather than extracting files just to reduce line count. Do not change behavior solely to refactor.
-- If future growth makes an extraction valuable, start with the cohesive library drag/insertion flow and define explicit dependencies for table lookup/drop handling, settings, feedback, and refresh. Avoid duplicated state or broad mechanical moves; verify the Rhino module-loading pattern first.
+- `scripts/main.js` remains the integration point for table binding, single moves, Delete confirmation, settings, library insertion, and refresh.
+- `scripts/bulk-selection.js` owns bulk MOVE/DELETE selection state, right-button region/toggle input, and the table-attached selection overlay. It is loaded as a sibling script module with `require("bulk-selection")`.
+- Split further by cohesive feature when requested; avoid broad mechanical moves or duplicated shared state. Pass dependencies through small module APIs and verify Rhino behavior.
+
+## Bulk selection
+
+- Right-drag in MOVE or Delete mode selects populated slots in a snapped table-cell rectangle and replaces that mode's prior selection. The last rectangle outline remains visible after release even when it contains no populated slots; it clears when another selection gesture starts, a slot is toggled individually, the selection is cleared, or the table is rebound. A right-click without a drag toggles one populated slot.
+- Detailed bulk-selection diagnostics use the existing debug-log toggle and `[Drag from Scheme Table]` prefix. They log cached slot-grid coordinates and gesture start/drag/end mapping. Avoid building or logging trace strings in `drawOverlay()`; drawing runs every frame.
+- Button selection/highlight state is recomputed only when the mode, category, bound table/buttons, selected move slot, or bulk selection changes. Keep per-frame `updateHighlight()` calls as cheap state checks; don't rescan every button against selection arrays on every update.
+- The overlay draws only the active or persistent region rectangle. Individual selected slots use the existing button checked/highlight style; do not issue a pair of `Lines.rect()` calls per selected slot per frame.
+- The recurring EUI update should use `liveTableButtonsMatch()` to detect stable bindings before layout validation, Java-sequence-to-array copies, and listener installation. Do not run `validate()` or rebuild the slot-button arrays every frame.
+- MOVE selections use the vanilla accent/accentBack outline colors; Delete selections use sapBullet/sapBulletBack. Bulk-selection input receives listener-local x/y and the originating slot button, converts the point to outer-table coordinates, and compares it with the cached table-local grid. Do not mix event stage coordinates with table-local slot bounds. The table's slots form a regular grid: use each slot's cached bounds in the first row for column centers/bounds, and the first column for row centers/bounds. Runtime logs showed the previous multi-slot aggregation collapsing every center to the first slot despite distinct cached slot bounds; direct grid anchors avoid that failure. The overlay draws slot borders and centers rectangle boundaries in the gaps between adjacent slots. Validate the outer table, wrapped table, and slot table before caching bounds; table child positions may not be laid out when bindings are first installed.
+- Left-click in MOVE with a bulk selection anchors its top-left cell at the clicked destination, preserving relative slot offsets and custom images. The complete move is rejected if it goes out of bounds, targets an occupied unselected slot, encounters stale source data, or maps multiple sources to one destination.
+- In Delete mode, existing left-click selection and the Delete button confirmation flow remain available alongside right-button selection.
+- In-game verification is required for Arc overlay positioning, right-button gesture capture, layout snapping, group move collision checks, and Delete confirmation.
 
 ## Extended UI integration
 

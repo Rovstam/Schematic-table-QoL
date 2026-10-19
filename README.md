@@ -13,7 +13,7 @@ This script mod adds schematic move and delete controls and library-to-table dra
 1. Click the **MOVE** button.
 <img width="428" height="443" alt="image" src="https://github.com/user-attachments/assets/1e44d543-91a8-4875-bbaf-6d93f63e6adb" />
 
-2. Click a populated slot, then click the destination slot.
+2. Click a populated slot, then click the destination slot. To move several schematics together, right-drag over a region or right-click individual schematics to select them, then left-click the destination for the selection's top-left slot. A new rectangle replaces the previous bulk selection; individual right-clicks toggle slots in or out. The yellow/orange outline follows the slot grid and remains visible around the last rectangle even if it contains no schematics. Group moves preserve the selected slots' relative positions and custom images; the whole move is rejected if it would exceed the table or overwrite an unselected schematic.
 
 
 https://github.com/user-attachments/assets/3ab606bc-a216-4b56-b3a4-97b2b77aa0e8
@@ -23,7 +23,7 @@ https://github.com/user-attachments/assets/3ab606bc-a216-4b56-b3a4-97b2b77aa0e8
 3. If the destination is occupied, confirm the swap in the popup.
 4. Click **MOVE** again to return to normal schematic-use behavior.
 
-Click **Delete** to enter Delete mode. The on-screen message explains how to select schematics; selected slots use the same highlight as hovering, and the Delete button is highlighted while Delete mode is active. Select multiple slots if desired, then click **Delete** again to review their names and confirm deletion. Each selected slot is deleted independently, along with its slot-specific custom image. Cancel clears the selection and exits Delete mode without enabling MOVE. With no schematics selected, clicking **Delete** again exits Delete mode.
+Click **Delete** to enter Delete mode. Right-drag over a region or right-click individual schematics to select them; a new rectangular selection replaces the previous selection. The purple outline follows the slot grid and remains visible around the last rectangle even if it contains no schematics, while each selected slot is outlined. Click **Delete** again to review the selected names and confirm deletion. Each selected slot is deleted independently, along with its slot-specific custom image. Cancel clears the selection and exits Delete mode without enabling MOVE. With no schematics selected, clicking **Delete** again exits Delete mode. In either mode, left-clicking still works for the existing single-slot move or Delete-mode selection behavior.
 
 Moves preserve a slot's custom image. Empty destinations receive a move and leave the source empty; occupied destinations are swapped after confirmation. Use **Settings > Extended UI > Skip schematic swap confirmations** to persistently control the confirmation popup. Dismissing the swap popup without confirming clears the selected schematic. Clicking the selected source again cancels the move. Ordinary table clicks are unchanged while move mode is off.
 

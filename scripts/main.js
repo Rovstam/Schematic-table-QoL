@@ -10,11 +10,27 @@ const scriptVersion = "1.0.4";
 const dragThresholdSquared = 64;
 const dragPreviewScale = 1.35;
 const libraryHoldMillis = 400;
+const bulkSelection = require("bulk-selection").create({
+    slotKey: slotKey,
+    getName: key => String(Core.settings.getString(key, "")),
+    getImage: key => String(Core.settings.getString(key, "")),
+    remove: key => Core.settings.remove(key),
+    put: (key, value) => Core.settings.put(key, value),
+    save: () => Core.settings.forceSave(),
+    announce: (key, first, second) => announceMoveMessage(
+        first === undefined
+            ? Core.bundle.get(key)
+            : second === undefined
+                ? Core.bundle.format(key, first)
+                : Core.bundle.format(key, first, second)
+    ),
+    log: message => dbg(message),
+    refresh: () => refreshSchematicTable()
+});
 
 let moveMode = false;
 let deleteMode = false;
 let selectedSlot = null;
-let selectedDeleteSlots = [];
 let skipSwapConfirmations = false;
 let visualDragEnabled = true;
 let showDebugLogs = true;
@@ -23,13 +39,24 @@ let dragPreview = null;
 let moveControl;
 let moveButton;
 let deleteButton;
+let moveControlTableHeight = -1;
 let boundTable;
+let boundWrappedTable;
+let boundSlotTable;
+let boundConfiguredRows = -1;
+let boundConfiguredColumns = -1;
 let attachedTable;
 let pendingDeletionVerification;
 let boundSlotButtons = [];
 let boundSlotStyles = [];
 let boundSlotDefaultBackgrounds = [];
 let boundSlotDeleteHighlights = [];
+let highlightDirty = true;
+let highlightedMode;
+let highlightedCategory = -1;
+let highlightedTable;
+let highlightedButtons;
+let highlightedSlotKey;
 let lastUpdateError;
 let boundCategoryButtons = [];
 let boundColumns = 5;
@@ -89,6 +116,25 @@ function slotKey(category, index, columns) {
     const column = index % columns;
     const row = Math.floor(index / columns);
     return "schematic" + category + "." + column + "." + row;
+}
+
+function getBulkSelectionMode() {
+    if (moveMode) return "move";
+    if (deleteMode) return "delete";
+    return null;
+}
+
+function getSlotSelection(category, index, columns) {
+    const key = slotKey(category, index, columns);
+    return {
+        key: key,
+        name: String(Core.settings.getString(key, "")),
+        image: String(Core.settings.getString(key + "image", "")),
+        category: category,
+        index: index,
+        column: index % columns,
+        row: Math.floor(index / columns)
+    };
 }
 
 function getSelectedCategory(categoryButtons) {
@@ -818,47 +864,27 @@ function selectOrMove(category, index, columns) {
 }
 
 function selectOrToggleDelete(category, index, columns) {
-    const key = slotKey(category, index, columns);
-    let selectedIndex = -1;
-    for (let i = 0; i < selectedDeleteSlots.length; i++) {
-        if (selectedDeleteSlots[i].key === key) {
-            selectedIndex = i;
-            break;
-        }
-    }
-    if (selectedIndex >= 0) {
-        selectedDeleteSlots.splice(selectedIndex, 1);
-        updateDeleteButtonHighlight();
-        updateHighlight(key);
-        //logDeleteSlotVisualState(key, index, false);
-        dbg("Deselected " + key + " for deletion.");
-        announceMoveMessage(Core.bundle.format(
-            "drag-scheme-table.delete-deselected",
-            selectedDeleteSlots.length
-        ));
-        return;
-    }
-
-    const name = Core.settings.getString(key, "");
-    if (!name) {
+    const slot = getSlotSelection(category, index, columns);
+    if (!slot.name) {
         announceMoveMessage(Core.bundle.get("drag-scheme-table.delete-empty-slot"));
         return;
     }
 
-    selectedDeleteSlots.push({
-        key: key,
-        name: String(name),
-        image: String(Core.settings.getString(key + "image", ""))
-    });
+    const selected = bulkSelection.toggle("delete", slot);
     updateDeleteButtonHighlight();
-    updateHighlight(key);
-    //logDeleteSlotVisualState(key, index, true);
-    dbg("Selected " + key + " (" + name + ") for deletion.");
-    announceMoveMessage(Core.bundle.format(
-        "drag-scheme-table.delete-selected",
-        name,
-        selectedDeleteSlots.length
-    ));
+    updateHighlight(slot.key);
+    dbg((selected ? "Selected " : "Deselected ") + slot.key +
+        " (" + slot.name + ") for deletion.");
+    announceMoveMessage(selected
+        ? Core.bundle.format(
+            "drag-scheme-table.delete-selected",
+            slot.name,
+            bulkSelection.getDeleteSlots().length
+        )
+        : Core.bundle.format(
+            "drag-scheme-table.delete-deselected",
+            bulkSelection.getDeleteSlots().length
+        ));
 }
 
 /* Console messages for debugging the visual state of schematic slot buttons. These are not used in normal operation, but can be helpful for diagnosing issues with button styles or interactions. Enable if highlighting in table breaks.
@@ -931,7 +957,7 @@ function deleteSelectedSchematics(selection) {
         }
     }
 
-    selectedDeleteSlots = [];
+    bulkSelection.clear("delete");
     deleteMode = false;
     updateDeleteButtonHighlight();
     updateHighlight();
@@ -983,6 +1009,7 @@ function verifyDeletedSlotsAfterTableUpdate(table) {
 }
 
 function showDeleteConfirm() {
+    const selectedDeleteSlots = bulkSelection.getDeleteSlots();
     if (selectedDeleteSlots.length === 0) {
         deleteMode = false;
         updateDeleteButtonHighlight();
@@ -992,7 +1019,7 @@ function showDeleteConfirm() {
     }
 
     clearMoveAnnouncement();
-    const selection = selectedDeleteSlots.slice();
+    const selection = selectedDeleteSlots;
     dbg("Delete confirmation snapshot keys: " +
         selection.map(selected => selected.key).join(",") + ".");
     const names = [];
@@ -1018,7 +1045,7 @@ function showDeleteConfirm() {
 
     dialog.hidden(() => {
         if (!confirmed) {
-            selectedDeleteSlots = [];
+            bulkSelection.clear("delete");
             deleteMode = false;
             updateDeleteButtonHighlight();
             updateHighlight();
@@ -1039,6 +1066,31 @@ function sameButtons(first, second) {
     if (first.length !== second.length) return false;
     for (let i = 0; i < first.length; i++) {
         if (first[i] !== second[i]) return false;
+    }
+    return true;
+}
+
+function liveTableButtonsMatch(table, rows, columns) {
+    if (boundTable !== table || boundConfiguredRows !== rows ||
+        boundConfiguredColumns !== columns || boundWrappedTable == null ||
+        boundSlotTable == null) return false;
+
+    const tableChildren = table.getChildren();
+    if (tableChildren.size === 0 || tableChildren.get(0) !== boundWrappedTable) return false;
+
+    const wrappedChildren = boundWrappedTable.getChildren();
+    if (wrappedChildren.size < 3 || wrappedChildren.get(0).getChildren().size !==
+        boundCategoryButtons.length || wrappedChildren.get(2) !== boundSlotTable) return false;
+
+    const categoryChildren = wrappedChildren.get(0).getChildren();
+    for (let i = 0; i < boundCategoryButtons.length; i++) {
+        if (categoryChildren.get(i) !== boundCategoryButtons[i]) return false;
+    }
+
+    const slotChildren = boundSlotTable.getChildren();
+    if (slotChildren.size !== boundSlotButtons.length) return false;
+    for (let i = 0; i < boundSlotButtons.length; i++) {
+        if (slotChildren.get(i) !== boundSlotButtons[i]) return false;
     }
     return true;
 }
@@ -1094,17 +1146,32 @@ function finishDrag(drag, stageX, stageY) {
     }
 }
 
+function moveSelectedSchematics(category, destinationIndex, columns) {
+    bulkSelection.moveSelected(
+        category,
+        destinationIndex,
+        columns,
+        Math.ceil(boundSlotButtons.length / columns)
+    );
+    selectedSlot = null;
+}
+
 function bindTableButtons(table) {
     const rows = Core.settings.getInt(rowsSetting, 4);
     const columns = Core.settings.getInt(columnsSetting, 5);
+    if (liveTableButtonsMatch(table, rows, columns)) return;
     if (table.getChildren().size === 0) return;
 
+    table.validate();
     const wrapped = table.getChildren().get(0);
+    wrapped.validate();
     const wrappedChildren = wrapped.getChildren();
     if (wrappedChildren.size < 3) return;
 
     const categories = wrappedChildren.get(0).getChildren();
-    const slots = wrappedChildren.get(2).getChildren();
+    const slotTable = wrappedChildren.get(2);
+    slotTable.validate();
+    const slots = slotTable.getChildren();
     if (categories.size === 0 || slots.size === 0) {
         throw new Error("Unexpected table layout: " + categories.size + " category buttons, " +
             slots.size + " schematic buttons.");
@@ -1124,7 +1191,14 @@ function bindTableButtons(table) {
     const categoryButtons = seqToArray(categories);
     const slotButtons = seqToArray(slots);
     const liveColumns = categoryButtons.length;
-    if (boundTable === table && boundColumns === liveColumns && sameButtons(boundSlotButtons, slotButtons)) return;
+    if (boundTable === table && boundColumns === liveColumns &&
+        sameButtons(boundSlotButtons, slotButtons)) {
+        boundWrappedTable = wrapped;
+        boundSlotTable = slotTable;
+        boundConfiguredRows = rows;
+        boundConfiguredColumns = columns;
+        return;
+    }
 
     boundCategoryButtons = categoryButtons;
     boundColumns = liveColumns;
@@ -1145,9 +1219,31 @@ function bindTableButtons(table) {
         boundSlotDeleteHighlights.push(false);
         slotButtons[i].addCaptureListener(new JavaAdapter(Packages.arc.scene.event.InputListener, {
             touchDown: function(event, x, y, pointer, button) {
+                const selectionMode = getBulkSelectionMode();
+                if (button == Packages.arc.input.KeyCode.mouseRight &&
+                    (moveMode || deleteMode)) {
+                    dbg("Bulk right-button input received: mode=" + selectionMode +
+                        ", category=" + getSelectedCategory(boundCategoryButtons) +
+                        ", slot=" + index + ", pointer=" + pointer +
+                        ", local=(" + x + "," + y + "), stage=(" +
+                        event.stageX + "," + event.stageY + ").");
+                    if (selectionMode == null) return false;
+                    if (!bulkSelection.begin(
+                        event,
+                        selectionMode,
+                        getSelectedCategory(boundCategoryButtons),
+                        index,
+                        pointer,
+                        slotButtons[index],
+                        x,
+                        y
+                    )) return false;
+                    event.stop();
+                    return true;
+                }
                 if ((!moveMode && !deleteMode) ||
                     button != Packages.arc.input.KeyCode.mouseLeft) return false;
-                if (moveMode) {
+                if (moveMode && bulkSelection.getMoveSlots().length === 0) {
                     const category = getSelectedCategory(boundCategoryButtons);
                     const key = slotKey(category, index, boundColumns);
                     activeDrag = {
@@ -1166,6 +1262,14 @@ function bindTableButtons(table) {
                 return true;
             },
             touchDragged: function(event, x, y, pointer) {
+                if (bulkSelection.drag(event, pointer, slotButtons[index], x, y)) {
+                    event.stop();
+                    return;
+                }
+                if (moveMode && bulkSelection.getMoveSlots().length > 0) {
+                    event.stop();
+                    return;
+                }
                 if (!moveMode || activeDrag == null || activeDrag.pointer !== pointer) return;
                 event.stop();
 
@@ -1180,6 +1284,28 @@ function bindTableButtons(table) {
                 }
             },
             touchUp: function(event, x, y, pointer, button) {
+                if (button == Packages.arc.input.KeyCode.mouseRight) {
+                    const result = bulkSelection.finish(
+                        event,
+                        pointer,
+                        slotButtons[index],
+                        x,
+                        y
+                    );
+                    if (result == null) {
+                        if (moveMode || deleteMode) {
+                            dbg("Bulk right-button release had no active gesture: mode=" +
+                                getBulkSelectionMode() + ", slot=" + index +
+                                ", pointer=" + pointer + ", local=(" + x + "," +
+                                y + "), stage=(" + event.stageX + "," +
+                                event.stageY + ").");
+                        }
+                        return;
+                    }
+                    event.stop();
+                    if (result.mode === "move") selectedSlot = null;
+                    return;
+                }
                 if ((!moveMode && !deleteMode) ||
                     button != Packages.arc.input.KeyCode.mouseLeft) return;
                 if (deleteMode) {
@@ -1194,7 +1320,20 @@ function bindTableButtons(table) {
                     );
                     return;
                 }
-                if (activeDrag == null || activeDrag.pointer !== pointer) return;
+                if (activeDrag == null || activeDrag.pointer !== pointer) {
+                    if (moveMode && bulkSelection.getMoveSlots().length > 0) {
+                        event.stop();
+                        const destination = findDropTarget(event.stageX, event.stageY);
+                        if (destination >= 0) {
+                            moveSelectedSchematics(
+                                getSelectedCategory(boundCategoryButtons),
+                                destination,
+                                boundColumns
+                            );
+                        }
+                    }
+                    return;
+                }
                 event.stop();
                 const drag = activeDrag;
                 const dx = event.stageX - drag.startX;
@@ -1217,31 +1356,64 @@ function bindTableButtons(table) {
     }
 
     boundTable = table;
+    boundWrappedTable = wrapped;
+    boundSlotTable = slotTable;
+    boundConfiguredRows = rows;
+    boundConfiguredColumns = columns;
+    bulkSelection.bind(
+        table,
+        slotButtons,
+        liveColumns,
+        (category, index) => getSlotSelection(category, index, liveColumns),
+        (mode, selection) => {
+            if (mode === "move") selectedSlot = null;
+            highlightDirty = true;
+            updateHighlight();
+        }
+    );
     dbg("Bound " + slotButtons.length + " schematic slots.");
 }
 
 function updateHighlight(traceKey) {
     const category = getSelectedCategory(boundCategoryButtons);
+    const mode = getBulkSelectionMode();
+    const selectedKey = selectedSlot == null ? null : selectedSlot.key;
+    if (!highlightDirty && highlightedMode === mode &&
+        highlightedCategory === category && highlightedTable === boundTable &&
+        highlightedButtons === boundSlotButtons && highlightedSlotKey === selectedKey) return;
+
+    const selectedMoveSlots = bulkSelection.getMoveSlots();
+    const selectedDeleteSlots = bulkSelection.getDeleteSlots();
+    const moveKeys = Object.create(null);
+    const deleteKeys = Object.create(null);
+    if (moveMode) {
+        for (let i = 0; i < selectedMoveSlots.length; i++) {
+            moveKeys[selectedMoveSlots[i].key] = true;
+        }
+        if (selectedKey != null) moveKeys[selectedKey] = true;
+    }
+    if (deleteMode) {
+        for (let i = 0; i < selectedDeleteSlots.length; i++) {
+            deleteKeys[selectedDeleteSlots[i].key] = true;
+        }
+    }
+
+    bulkSelection.update(mode, category);
     let traceMatched = false;
     for (let i = 0; i < boundSlotButtons.length; i++) {
         const key = slotKey(category, i, boundColumns);
-        const moveSelected = moveMode && selectedSlot != null && selectedSlot.key === key;
-        let deleteSelected = false;
-        if (deleteMode) {
-            for (let j = 0; j < selectedDeleteSlots.length; j++) {
-                if (selectedDeleteSlots[j].key === key) {
-                    deleteSelected = true;
-                    break;
-                }
-            }
-        }
+        const moveSelected = !!moveKeys[key];
+        const deleteSelected = !!deleteKeys[key];
         if (boundSlotDeleteHighlights[i] !== deleteSelected) {
             const style = boundSlotStyles[i];
             style.up = deleteSelected ? style.over : boundSlotDefaultBackgrounds[i];
             boundSlotButtons[i].setStyle(style);
             boundSlotDeleteHighlights[i] = deleteSelected;
         }
-        boundSlotButtons[i].setChecked(moveSelected || deleteSelected);
+        const checked = moveSelected || deleteSelected;
+        if (boundSlotButtons[i].isChecked() !== checked) {
+            boundSlotButtons[i].setChecked(checked);
+        }
         if (key === traceKey) {
             const button = boundSlotButtons[i];
             const style = button.getStyle();
@@ -1261,10 +1433,18 @@ function updateHighlight(traceKey) {
             ", columns=" + boundColumns +
             ", selectedKeys=" + selectedDeleteSlots.map(slot => slot.key).join(",") + ").");
     }
+    highlightDirty = false;
+    highlightedMode = mode;
+    highlightedCategory = category;
+    highlightedTable = boundTable;
+    highlightedButtons = boundSlotButtons;
+    highlightedSlotKey = selectedKey;
 }
 
 function updateDeleteButtonHighlight() {
-    if (deleteButton) deleteButton.setChecked(deleteMode);
+    if (deleteButton && deleteButton.isChecked() !== deleteMode) {
+        deleteButton.setChecked(deleteMode);
+    }
 }
 
 function createMoveControl() {
@@ -1278,7 +1458,7 @@ function createMoveControl() {
         moveMode = !moveMode;
         deleteMode = false;
         selectedSlot = null;
-        selectedDeleteSlots = [];
+        bulkSelection.clear();
         clearVisualDrag();
         moveButton.setChecked(moveMode);
         updateDeleteButtonHighlight();
@@ -1298,7 +1478,7 @@ function createMoveControl() {
                 deleteMode = true;
                 moveMode = false;
                 selectedSlot = null;
-                selectedDeleteSlots = [];
+                bulkSelection.clear();
                 clearVisualDrag();
                 moveButton.setChecked(moveMode);
                 updateDeleteButtonHighlight();
@@ -1322,15 +1502,24 @@ function createMoveControl() {
 }
 
 function attachMoveControl(table) {
+    let attached = false;
     if (attachedTable !== table) {
         if (attachedTable != null) attachedTable.removeChild(moveControl);
         table.addChild(moveControl);
         attachedTable = table;
+        attached = true;
         dbg("Attached MOVE control to schematic table.");
     }
 
-    moveControl.setPosition(0, table.getHeight(), Align.bottomLeft);
-    moveControl.toFront();
+    const tableHeight = table.getHeight();
+    if (attached || moveControlTableHeight !== tableHeight) {
+        moveControl.setPosition(0, table.getHeight(), Align.bottomLeft);
+        moveControlTableHeight = tableHeight;
+    }
+    if (attached) {
+        moveControl.toFront();
+        bulkSelection.bringToFront();
+    }
 }
 
 Events.on(ClientLoadEvent, () => {
@@ -1360,7 +1549,7 @@ Events.on(ClientLoadEvent, () => {
                     clearVisualDrag();
                     if (libraryCandidate != null) cancelLibraryDrag(true);
                     selectedSlot = null;
-                    selectedDeleteSlots = [];
+                    bulkSelection.clear();
                     moveMode = false;
                     deleteMode = false;
                     moveButton.setChecked(false);
@@ -1377,7 +1566,7 @@ Events.on(ClientLoadEvent, () => {
                 waitingLogged = false;
                 bindTableButtons(table);
                 verifyDeletedSlotsAfterTableUpdate(table);
-                moveButton.setChecked(moveMode);
+                if (moveButton.isChecked() !== moveMode) moveButton.setChecked(moveMode);
                 updateDeleteButtonHighlight();
                 updateHighlight();
                 attachMoveControl(table);
