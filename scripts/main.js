@@ -11,7 +11,6 @@ const dragThresholdSquared = 64;
 const dragPreviewScale = 1.35;
 const libraryHoldMillis = 400;
 let pendingBulkMoveVerification = null;
-let pendingModeOffClick = null;
 const bulkSelection = require("bulk-selection").create({
     slotKey: slotKey,
     getName: key => String(Core.settings.getString(key, "")),
@@ -473,21 +472,6 @@ function verifyBulkMoveBindings() {
             ", imageMatches=" + (image === expected.expectedImage) + ".");
     }
     pendingBulkMoveVerification = null;
-}
-
-function verifyModeOffClick() {
-    if (pendingModeOffClick == null) return;
-    const click = pendingModeOffClick;
-    pendingModeOffClick = null;
-    const style = click.button.getStyle();
-    dbg("Mode-off schematic click state after table update: key=" + click.key +
-        ", name=" + JSON.stringify(click.name) +
-        ", checkedBefore=" + click.checkedBefore +
-        ", checkedAfter=" + click.button.isChecked() +
-        ", hoveringAfter=" + click.button.isOver() +
-        ", upMatchesOver=" + (style.up === style.over) +
-        ", backgroundMatchesUp=" +
-        (click.button.getBackground() === style.up) + ".");
 }
 
 function describeLibraryTag(tag) {
@@ -1611,7 +1595,7 @@ function bindTableButtons(table) {
         const slotStyle = new Packages.arc.scene.ui.ImageButton.ImageButtonStyle(
             slotButtons[i].getStyle()
         );
-        slotStyle.checked = slotStyle.over;
+        slotStyle.checked = null;
         slotButtons[i].setStyle(slotStyle);
         boundSlotStyles.push(slotStyle);
         boundSlotDefaultBackgrounds.push(slotStyle.up);
@@ -1645,12 +1629,6 @@ function bindTableButtons(table) {
                         "], bulkDeleteKeys=[" +
                         describeSlotKeys(bulkSelection.getDeleteSlots()) +
                         "], listenerReturns=false (normal table click continues).");
-                    pendingModeOffClick = {
-                        key: slot.key,
-                        name: slot.name,
-                        button: slotButtons[index],
-                        checkedBefore: slotButtons[index].isChecked()
-                    };
                 }
                 if (button == Packages.arc.input.KeyCode.mouseRight &&
                     (moveMode || deleteMode)) {
@@ -1899,8 +1877,13 @@ function updateHighlight(traceKey) {
         const key = slotKey(category, i, boundColumns);
         const moveSelected = !!moveKeys[key];
         const deleteSelected = !!deleteKeys[key];
+        const style = boundSlotStyles[i];
+        const checkedStyle = mode == null ? null : style.over;
+        if (style.checked !== checkedStyle) {
+            style.checked = checkedStyle;
+            boundSlotButtons[i].setStyle(style);
+        }
         if (boundSlotDeleteHighlights[i] !== deleteSelected) {
-            const style = boundSlotStyles[i];
             style.up = deleteSelected ? style.over : boundSlotDefaultBackgrounds[i];
             boundSlotButtons[i].setStyle(style);
             boundSlotDeleteHighlights[i] = deleteSelected;
@@ -1911,13 +1894,13 @@ function updateHighlight(traceKey) {
         }
         if (key === traceKey) {
             const button = boundSlotButtons[i];
-            const style = button.getStyle();
+            const traceStyle = button.getStyle();
             dbg("Delete highlight update: key=" + traceKey +
                 ", category=" + category +
                 ", index=" + i +
                 ", selectionMatch=" + deleteSelected +
                 ", trackedHighlight=" + boundSlotDeleteHighlights[i] +
-                ", upMatchesOver=" + (style.up === style.over) +
+                ", upMatchesOver=" + (traceStyle.up === traceStyle.over) +
                 ", checked=" + button.isChecked() + ".");
             traceMatched = true;
         }
@@ -2041,7 +2024,6 @@ Events.on(ClientLoadEvent, () => {
 
                 const table = findTable();
                 if (!Core.settings.getBool("eui-ShowSchematicsTable", true)) {
-                    pendingModeOffClick = null;
                     clearVisualDrag();
                     if (libraryCandidate != null) cancelLibraryDrag(true);
                     selectedSlot = null;
@@ -2053,7 +2035,6 @@ Events.on(ClientLoadEvent, () => {
                     return;
                 }
                 if (!table) {
-                    pendingModeOffClick = null;
                     clearBulkDragPreview();
                     activeBulkDrag = null;
                     if (!waitingLogged) {
@@ -2066,7 +2047,6 @@ Events.on(ClientLoadEvent, () => {
                 bindTableButtons(table);
                 verifyBulkMoveBindings();
                 verifyDeletedSlotsAfterTableUpdate(table);
-                verifyModeOffClick();
                 if (moveButton.isChecked() !== moveMode) moveButton.setChecked(moveMode);
                 updateDeleteButtonHighlight();
                 updateHighlight();

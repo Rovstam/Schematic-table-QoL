@@ -20,12 +20,14 @@
 - Occupied destinations use confirmation; cancellation leaves the slots unchanged.
 - Moves transfer the source slot's custom image setting, clear the source as appropriate, and rebuild the EUI table.
 - Visual table-to-table dragging can be disabled while click-to-select/click-to-move remains available.
+- In normal mode, slot outlines are hover-only; clicking a schematic to use it must not leave the checked selection outline visible. Checked selection outlines are enabled only in Move or Delete mode.
 - The vanilla-library-to-table feature uses a stationary hold of about 0.4 seconds, then shows a pointer-following preview. Empty destinations insert; occupied destinations ask for confirmation; drops outside the table do nothing.
 - Preserve normal vanilla schematic-card clicks and nested info/export/edit/delete controls.
 
 ## Delete-mode selection: current runtime findings
 
 - The user confirmed in-game that Delete mode and selected schematic slots highlight correctly. The selected slot uses the same appearance as the normal hover highlight; preserve this behavior.
+- Latest user report (2026-10-19): bulk selection retains selected slot information and its selection/move functionality, but the visible bulk-selection wrapper/outline is not going around the selected schematic icons. Track this as an outstanding bulk visual issue only; do not change the working bulk selection data or behavior while addressing separate single-left-click selection visuals.
 - Multi-selection, the confirmation list, and deletion of all selected slots have been confirmed working in-game.
 - A multi-delete bug repeatedly processed the first selected slot despite looping over the selection. Explicit per-iteration `var` values for the selected key and associated data fixed it in Rhino. Preserve this approach in the deletion and post-rebuild verification loops unless an alternative is runtime-tested.
 - Each selected slot is deleted independently, including its slot-specific custom image. Keep the confirmation snapshot, stale-slot checks, and table refresh consistent with that behavior.
