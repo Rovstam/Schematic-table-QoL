@@ -16,7 +16,7 @@
 
 ## Existing functionality to preserve
 
-- MOVE mode selects/highlights a populated table slot, then moves it to another slot; cross-category moves are supported.
+- MOVE mode selects/highlights a populated table slot, then moves it to another slot; cross-category moves are supported. Keep a selected source outlined until a move or swap succeeds, or MOVE mode is turned off.
 - Occupied destinations use confirmation; cancellation leaves the slots unchanged.
 - Moves transfer the source slot's custom image setting, clear the source as appropriate, and rebuild the EUI table.
 - Visual table-to-table dragging can be disabled while click-to-select/click-to-move remains available.
@@ -24,15 +24,20 @@
 - The vanilla-library-to-table feature uses a stationary hold of about 0.4 seconds, then shows a pointer-following preview. Empty destinations insert; occupied destinations ask for confirmation; drops outside the table do nothing.
 - Preserve normal vanilla schematic-card clicks and nested info/export/edit/delete controls.
 
-## Delete-mode selection: current runtime findings
+## Move/Delete selection: current findings
 
-- The user confirmed in-game that Delete mode and selected schematic slots highlight correctly. The selected slot uses the same appearance as the normal hover highlight; preserve this behavior.
-- Latest user report (2026-10-19): bulk selection retains selected slot information and its selection/move functionality, but the visible bulk-selection wrapper/outline is not going around the selected schematic icons. Track this as an outstanding bulk visual issue only; do not change the working bulk selection data or behavior while addressing separate single-left-click selection visuals.
+- The individual Move/Delete highlighting issue remains unresolved. The user reports that bulk selection and movement/deletion data work, but only the first selected schematic is individually highlighted. A previous index-based highlight lookup change did not fix the issue.
+- Bulk selection data, confirmation lists, group movement, and deletion remain owned by `bulk-selection.js`; do not change those behaviors to fix rendering.
+- The current source attempts to draw per-slot borders from selection records and cached button bounds in a non-interactive overlay, without altering slot styles or image drawables. The user tested an earlier revision of this path and reported that it still outlined only the first selected schematic; do not describe the per-slot fix as working.
+- The bulk selection rectangle was previously working, was removed during the overlay rewrite, and has since been restored in `drawOverlay()` alongside per-slot borders. The restoration has not yet been tested in-game. Preserve both the active drag rectangle and the persistent rectangle around the completed region; do not remove or replace them while diagnosing per-slot highlights.
+- Runtime logs confirm bulk selection records contain distinct correct keys, including a selection of 18 populated slots across two rows. A diagnostic then reported `boundColumns=10` but `(0,0)` for indices 0, 1, and 2, even though its inline `index % boundColumns` calculation should differ for those indices. Treat this as contradictory runtime evidence: trace the actual values and draw path rather than assuming a key/index mapping fix.
+- Cancelling Delete clears selection and exits Delete mode. The user observed a Delete-like visual persisting until a category/table change in an earlier revision. Never modify schematic icon drawables or custom-image settings to implement highlighting; verify button style/background state and table rebuild behavior if that symptom recurs.
+- For single-slot Move, the requested behavior is to keep the source outlined until a move/swap succeeds or Move mode is exited. A dismissed swap confirmation or stale move should retain the source selection. This behavior and the overlay rendering remain unverified in-game.
 - Multi-selection, the confirmation list, and deletion of all selected slots have been confirmed working in-game.
 - A multi-delete bug repeatedly processed the first selected slot despite looping over the selection. Explicit per-iteration `var` values for the selected key and associated data fixed it in Rhino. Preserve this approach in the deletion and post-rebuild verification loops unless an alternative is runtime-tested.
 - Each selected slot is deleted independently, including its slot-specific custom image. Keep the confirmation snapshot, stale-slot checks, and table refresh consistent with that behavior.
 - Cancel/Escape/Back clears selection and exits Delete mode without enabling MOVE. Confirmation also clears selection and exits Delete mode.
-- Diagnostic logs are gated by the persistent `drag-scheme-table.show-debug-logs` preference, defaulting to enabled; errors and warnings remain visible when routine diagnostics are disabled. Temporary highlight diagnostics can be removed when no longer needed, but preserve the actual style/state logic in `updateHighlight()`.
+- Diagnostic logs are gated by the persistent `drag-scheme-table.show-debug-logs` preference, defaulting to enabled; errors and warnings remain visible when routine diagnostics are disabled. Keep highlight rendering separate from schematic button styles and image drawables. Use narrowly scoped diagnostics for selected buttons and their actual draw bounds; avoid logging all 150 slots.
 - A prior crash was caused by an `exit` callback invoking a diagnostic helper after it had been commented out. The obsolete callback was removed; avoid leaving calls to removed or commented-out helpers.
 
 ## Current library-drag implementation and performance goal

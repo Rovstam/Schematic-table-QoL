@@ -13,6 +13,7 @@ function create(operations) {
     let activeSelection;
     let lastRectangle;
     let overlay;
+    let singleMoveIndex = -1;
     let cachedGrid;
     let cachedBounds = [];
     const moveSlots = [];
@@ -327,21 +328,29 @@ function create(operations) {
         const mode = currentMode;
         if (mode !== "move" && mode !== "delete") return;
 
+        const backColor = mode === "move" ? Pal.accentBack : Pal.sapBulletBack;
+        const frontColor = mode === "move" ? Pal.accent : Pal.sapBullet;
+        const offsetX = overlay.x;
+        const offsetY = overlay.y;
         const activeRectangleVisible = activeSelection != null &&
             activeSelection.mode === mode &&
             activeSelection.category === currentCategory &&
             activeSelection.dragging && activeSelection.rectangle != null;
         const persistentRectangleVisible = lastRectangle != null &&
-            lastRectangle.mode === mode && lastRectangle.category === currentCategory;
-        if (!activeRectangleVisible && !persistentRectangleVisible) return;
-
-        const backColor = mode === "move" ? Pal.accentBack : Pal.sapBulletBack;
-        const frontColor = mode === "move" ? Pal.accent : Pal.sapBullet;
-        const offsetX = overlay.x;
-        const offsetY = overlay.y;
+            lastRectangle.mode === mode &&
+            lastRectangle.category === currentCategory;
+        const selection = slotsFor(mode);
+        let drewOutline = false;
 
         if (activeRectangleVisible) {
-            drawRectangle(activeSelection.rectangle, backColor, frontColor, offsetX, offsetY);
+            drawRectangle(
+                activeSelection.rectangle,
+                backColor,
+                frontColor,
+                offsetX,
+                offsetY
+            );
+            drewOutline = true;
         }
         if (persistentRectangleVisible) {
             drawRectangle(
@@ -351,8 +360,37 @@ function create(operations) {
                 offsetX,
                 offsetY
             );
+            drewOutline = true;
         }
-        Draw.reset();
+        for (let i = 0; i < selection.length; i++) {
+            const slot = selection[i];
+            if (slot.category !== currentCategory ||
+                slot.index < 0 || slot.index >= cachedBounds.length) continue;
+            drawRectangle(cachedBounds[slot.index], backColor, frontColor, offsetX, offsetY);
+            drewOutline = true;
+        }
+        if (mode === "move" && singleMoveIndex >= 0 &&
+            singleMoveIndex < cachedBounds.length) {
+            let alreadyOutlined = false;
+            for (let i = 0; i < selection.length; i++) {
+                if (selection[i].category === currentCategory &&
+                    selection[i].index === singleMoveIndex) {
+                    alreadyOutlined = true;
+                    break;
+                }
+            }
+            if (!alreadyOutlined) {
+                drawRectangle(
+                    cachedBounds[singleMoveIndex],
+                    backColor,
+                    frontColor,
+                    offsetX,
+                    offsetY
+                );
+                drewOutline = true;
+            }
+        }
+        if (drewOutline) Draw.reset();
     }
 
     function installOverlay() {
@@ -816,7 +854,7 @@ function create(operations) {
         };
     }
 
-    function update(mode, category) {
+    function update(mode, category, selectedMoveIndex) {
         if (currentMode !== mode || currentCategory !== category) {
             operations.log("Bulk overlay mode/category changed: mode=" + mode +
                 ", category=" + category + ", persistentRectangle=" +
@@ -826,6 +864,9 @@ function create(operations) {
         }
         currentMode = mode;
         currentCategory = category;
+        singleMoveIndex = mode === "move" && selectedMoveIndex != null
+            ? selectedMoveIndex
+            : -1;
         if (overlay != null && table != null) {
             overlay.setSize(table.getWidth(), table.getHeight());
             overlay.toFront();

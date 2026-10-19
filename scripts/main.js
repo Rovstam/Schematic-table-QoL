@@ -59,9 +59,6 @@ let boundConfiguredColumns = -1;
 let attachedTable;
 let pendingDeletionVerification;
 let boundSlotButtons = [];
-let boundSlotStyles = [];
-let boundSlotDefaultBackgrounds = [];
-let boundSlotDeleteHighlights = [];
 let highlightDirty = true;
 let highlightedMode;
 let highlightedCategory = -1;
@@ -1044,9 +1041,8 @@ function showSwapConfirm(source, destination, expectedDestination) {
 
     dialog.hidden(() => {
         if (!confirmed) {
-            selectedSlot = null;
             announceMoveMessage(Core.bundle.get("drag-scheme-table.swap-cancelled"));
-            dbg("Swap confirmation dismissed; cleared selected schematic.");
+            dbg("Swap confirmation dismissed; selected source remains active.");
         }
     });
 
@@ -1064,8 +1060,8 @@ function moveSchematic(source, destination, expectedDestination) {
     const currentDestination = Core.settings.getString(destination, "");
 
     if (currentSource !== source.name || currentDestination !== expectedDestination) {
-        selectedSlot = null;
         announceMoveMessage(Core.bundle.get("drag-scheme-table.move-stale"));
+        dbg("Move rejected as stale; selected source remains active: " + source.key + ".");
         return;
     }
 
@@ -1091,6 +1087,7 @@ function moveSchematic(source, destination, expectedDestination) {
     }
 
     selectedSlot = null;
+    updateHighlight();
     announceMoveMessage(Core.bundle.get(currentDestination
         ? "drag-scheme-table.swap-complete"
         : "drag-scheme-table.move-complete"));
@@ -1108,14 +1105,22 @@ function selectOrMove(category, index, columns) {
             announceMoveMessage(Core.bundle.get("drag-scheme-table.no-source"));
             return;
         }
-        selectedSlot = { key: key, name: value };
+        selectedSlot = {
+            key: key,
+            name: value,
+            category: category,
+            index: index
+        };
         announceMoveMessage(Core.bundle.format("drag-scheme-table.source-selected", value));
         return;
     }
 
     if (selectedSlot.key === key) {
-        selectedSlot = null;
-        announceMoveMessage(Core.bundle.get("drag-scheme-table.move-cancelled"));
+        announceMoveMessage(Core.bundle.format(
+            "drag-scheme-table.source-selected",
+            selectedSlot.name
+        ));
+        dbg("Selected source remains active until a move or swap succeeds: " + key + ".");
         return;
     }
 
@@ -1140,7 +1145,7 @@ function selectOrToggleDelete(category, index, columns) {
 
     const selected = bulkSelection.toggle("delete", slot);
     updateDeleteButtonHighlight();
-    updateHighlight(slot.key);
+    updateHighlight();
     dbg((selected ? "Selected " : "Deselected ") + slot.key +
         " (" + slot.name + ") for deletion.");
     announceMoveMessage(selected
@@ -1586,20 +1591,9 @@ function bindTableButtons(table) {
     boundCategoryButtons = categoryButtons;
     boundColumns = liveColumns;
     boundSlotButtons = slotButtons;
-    boundSlotStyles = [];
-    boundSlotDefaultBackgrounds = [];
-    boundSlotDeleteHighlights = [];
 
     for (let i = 0; i < slotButtons.length; i++) {
         const index = i;
-        const slotStyle = new Packages.arc.scene.ui.ImageButton.ImageButtonStyle(
-            slotButtons[i].getStyle()
-        );
-        slotStyle.checked = null;
-        slotButtons[i].setStyle(slotStyle);
-        boundSlotStyles.push(slotStyle);
-        boundSlotDefaultBackgrounds.push(slotStyle.up);
-        boundSlotDeleteHighlights.push(false);
         slotButtons[i].addCaptureListener(new JavaAdapter(Packages.arc.scene.event.InputListener, {
             touchDown: function(event, x, y, pointer, button) {
                 const selectionMode = getBulkSelectionMode();
@@ -1847,7 +1841,7 @@ function bindTableButtons(table) {
     dbg("Bound " + slotButtons.length + " schematic slots.");
 }
 
-function updateHighlight(traceKey) {
+function updateHighlight() {
     const category = getSelectedCategory(boundCategoryButtons);
     const mode = getBulkSelectionMode();
     const selectedKey = selectedSlot == null ? null : selectedSlot.key;
@@ -1855,62 +1849,11 @@ function updateHighlight(traceKey) {
         highlightedCategory === category && highlightedTable === boundTable &&
         highlightedButtons === boundSlotButtons && highlightedSlotKey === selectedKey) return;
 
-    const selectedMoveSlots = bulkSelection.getMoveSlots();
-    const selectedDeleteSlots = bulkSelection.getDeleteSlots();
-    const moveKeys = Object.create(null);
-    const deleteKeys = Object.create(null);
-    if (moveMode) {
-        for (let i = 0; i < selectedMoveSlots.length; i++) {
-            moveKeys[selectedMoveSlots[i].key] = true;
-        }
-        if (selectedKey != null) moveKeys[selectedKey] = true;
-    }
-    if (deleteMode) {
-        for (let i = 0; i < selectedDeleteSlots.length; i++) {
-            deleteKeys[selectedDeleteSlots[i].key] = true;
-        }
-    }
-
-    bulkSelection.update(mode, category);
-    let traceMatched = false;
-    for (let i = 0; i < boundSlotButtons.length; i++) {
-        const key = slotKey(category, i, boundColumns);
-        const moveSelected = !!moveKeys[key];
-        const deleteSelected = !!deleteKeys[key];
-        const style = boundSlotStyles[i];
-        const checkedStyle = mode == null ? null : style.over;
-        if (style.checked !== checkedStyle) {
-            style.checked = checkedStyle;
-            boundSlotButtons[i].setStyle(style);
-        }
-        if (boundSlotDeleteHighlights[i] !== deleteSelected) {
-            style.up = deleteSelected ? style.over : boundSlotDefaultBackgrounds[i];
-            boundSlotButtons[i].setStyle(style);
-            boundSlotDeleteHighlights[i] = deleteSelected;
-        }
-        const checked = moveSelected || deleteSelected;
-        if (boundSlotButtons[i].isChecked() !== checked) {
-            boundSlotButtons[i].setChecked(checked);
-        }
-        if (key === traceKey) {
-            const button = boundSlotButtons[i];
-            const traceStyle = button.getStyle();
-            dbg("Delete highlight update: key=" + traceKey +
-                ", category=" + category +
-                ", index=" + i +
-                ", selectionMatch=" + deleteSelected +
-                ", trackedHighlight=" + boundSlotDeleteHighlights[i] +
-                ", upMatchesOver=" + (traceStyle.up === traceStyle.over) +
-                ", checked=" + button.isChecked() + ".");
-            traceMatched = true;
-        }
-    }
-    if (traceKey != null && !traceMatched) {
-        dbg("Delete highlight update: selected key=" + traceKey +
-            " has no matching visible slot (category=" + category +
-            ", columns=" + boundColumns +
-            ", selectedKeys=" + describeSlotKeys(selectedDeleteSlots) + ").");
-    }
+    const singleMoveIndex = moveMode && selectedSlot != null &&
+        selectedSlot.category === category
+        ? selectedSlot.index
+        : null;
+    bulkSelection.update(mode, category, singleMoveIndex);
     highlightDirty = false;
     highlightedMode = mode;
     highlightedCategory = category;
