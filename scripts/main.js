@@ -86,7 +86,7 @@ function dbg(message) {
     if (showDebugLogs) Log.info("[Drag from Scheme Table] " + message);
 }
 
-function announceMoveMessage(message) {
+function announceMoveMessage(message, persistUntilNextMessage) {
     if (lastMoveAnnouncement != null) lastMoveAnnouncement.remove();
 
     const announcement = new Table(Styles.black3);
@@ -97,7 +97,9 @@ function announceMoveMessage(message) {
         announcement.toFront();
         if (Vars.state.isMenu() || !Vars.ui.hudfrag.shown) announcement.remove();
     });
-    announcement.actions(Actions.fadeOut(3, Interp.pow4In), Actions.remove());
+    if (!persistUntilNextMessage) {
+        announcement.actions(Actions.fadeOut(3, Interp.pow4In), Actions.remove());
+    }
     announcement.pack();
     announcement.act(0.1);
     Core.scene.add(announcement);
@@ -1885,9 +1887,12 @@ function createMoveControl() {
         updateDeleteButtonHighlight();
         updateHighlight();
         dbg("Move mode " + (moveMode ? "ON" : "OFF"));
-        announceMoveMessage(Core.bundle.get(moveMode
-            ? "drag-scheme-table.mode-enabled"
-            : "drag-scheme-table.mode-disabled"));
+        announceMoveMessage(
+            Core.bundle.get(moveMode
+                ? "drag-scheme-table.mode-enabled"
+                : "drag-scheme-table.mode-disabled"),
+            moveMode
+        );
     }).size(72, 36).tooltip(Core.bundle.get("drag-scheme-table.mode-tooltip")).get();
     const deleteButtonStyle = new Packages.arc.scene.ui.TextButton.TextButtonStyle(Styles.defaultt);
     deleteButtonStyle.checked = deleteButtonStyle.over;
@@ -1906,7 +1911,8 @@ function createMoveControl() {
                 updateHighlight();
                 announceMoveMessage(
                     Core.bundle.get("drag-scheme-table.delete-mode-enabled") + "\n" +
-                    Core.bundle.get("drag-scheme-table.delete-mode-instruction")
+                    Core.bundle.get("drag-scheme-table.delete-mode-instruction"),
+                    true
                 );
                 dbg("Delete mode ON.");
             } else {
