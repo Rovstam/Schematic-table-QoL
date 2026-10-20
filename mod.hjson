@@ -3,7 +3,7 @@
     "displayName": "Schematic table QoL",
     "author": "Rovstam",
     "description": "Move, delete, and drag schematics in the Extended UI table.",
-    "version": "1.0.4",
+    "version": "1.0.5",
     "minGameVersion": "158.1",
     "dependencies": ["extended-ui"],
     "main": "scripts/main",

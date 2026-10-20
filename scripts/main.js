@@ -6,7 +6,7 @@ const tableName = "eui-schematics-table";
 const skipSwapConfirmationsSetting = "drag-scheme-table.skip-swap-confirmations";
 const visualDragSetting = "drag-scheme-table.visual-drag";
 const showDebugLogsSetting = "drag-scheme-table.show-debug-logs";
-const scriptVersion = "1.0.4";
+const scriptVersion = "1.0.5";
 const dragThresholdSquared = 64;
 const dragPreviewScale = 1.35;
 const libraryHoldMillis = 400;
@@ -598,7 +598,8 @@ function continueLibraryInsert(schematic, destination, expectedDestination, icon
         return;
     }
 
-    if (expectedDestination && !skipSwapConfirmations) {
+    // Add `&& !skipSwapConfirmations` after expectedDestination for Disabling confirmation for library insertions
+    if (expectedDestination) {
         showLibraryInsertConfirm(schematic, destination, expectedDestination, iconChoice);
     } else {
         insertLibrarySchematic(schematic, destination, expectedDestination, iconChoice);

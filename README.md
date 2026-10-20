@@ -2,7 +2,7 @@
 
 This script mod adds schematic move and delete controls and library-to-table dragging to Salivion's Extended UI schematic table.
 
-## Version 1.0.4
+## Version 1.0.5
 
 - Added Bulk-select move and delete features with right click for schematics in the Extended UI table.
 - Schematic drag from Vanilla UI now Displays a message asking what Tag should be used for the Table's icon.
