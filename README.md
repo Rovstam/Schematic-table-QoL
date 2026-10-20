@@ -14,21 +14,21 @@ This script mod adds schematic move and delete controls and library-to-table dra
 1. Click the **MOVE** button.
 <img width="428" height="443" alt="image" src="https://github.com/user-attachments/assets/1e44d543-91a8-4875-bbaf-6d93f63e6adb" />
 
-2. Click a populated slot, then click the destination slot.
+2. Click a populated slot, then click the destination slot. The selected source remains highlighted until a move or swap succeeds. To move several schematics together, right-drag over a region or right-click individual schematics to select them. Each populated selected slot is outlined; empty slots are not highlighted. During a right-drag, the selection rectangle follows the pointer and remains around the selected region after release. Left-drag a selected slot to move the group. The cursor-following preview preserves the selected slots' relative positions and the grab offset. A new rectangle replaces the previous bulk selection; individual right-clicks toggle slots in or out. Group moves preserve custom images; they are rejected if they would exceed the table, and ask before replacing any unselected destination schematics.
 
 
 https://github.com/user-attachments/assets/3ab606bc-a216-4b56-b3a4-97b2b77aa0e8
 
 
 
-3. If the destination is occupied, confirm the swap in the popup.
+3. For a single schematic, confirm a swap if the destination is occupied. For a bulk move, confirm before any occupied destination schematics are replaced; empty destinations move without a prompt.
 4. Click **MOVE** again to return to normal schematic-use behavior.
 
-Click **Delete** to enter Delete mode. The on-screen message explains how to select schematics; selected slots use the same highlight as hovering, and the Delete button is highlighted while Delete mode is active. Select multiple slots if desired, then click **Delete** again to review their names and confirm deletion. Each selected slot is deleted independently, along with its slot-specific custom image. Cancel clears the selection and exits Delete mode without enabling MOVE. With no schematics selected, clicking **Delete** again exits Delete mode.
+Click **Delete** to enter Delete mode. Right-drag over a region or right-click individual schematics to select them; a new rectangular selection replaces the previous selection. Each populated selected slot is outlined; empty slots are not highlighted. During a right-drag, the selection rectangle follows the pointer and remains around the selected region after release. Click **Delete** again to review the selected names and confirm deletion. Each selected slot is deleted independently, along with its slot-specific custom image. Cancel clears the selection and exits Delete mode without enabling MOVE. With no schematics selected, clicking **Delete** again exits Delete mode. In either mode, left-clicking still works for the existing single-slot move or Delete-mode selection behavior.
 
-Moves preserve a slot's custom image. Empty destinations receive a move and leave the source empty; occupied destinations are swapped after confirmation. Use **Settings > Extended UI > Skip schematic swap confirmations** to persistently control the confirmation popup. Dismissing the swap popup without confirming clears the selected schematic. Clicking the selected source again cancels the move. Ordinary table clicks are unchanged while move mode is off.
+Moves preserve a slot's custom image. Empty destinations receive a move and leave the source empty; occupied destinations are swapped after confirmation. Use **Settings > Extended UI > Skip schematic swap confirmations** to persistently control the confirmation popup. Dismissing a swap popup leaves the source selected and highlighted. The selected source remains pending until a move or swap succeeds, or MOVE mode is turned off. In normal mode, schematic slots show their outline on hover only; clicking a schematic to use it does not leave a selection outline behind.
 
-In MOVE mode, hold and drag a schematic to see an outlined floating preview. Drop it on an empty slot to move it, or on an occupied slot to open the swap confirmation. Dropping outside the schematic slots leaves everything unchanged.
+In MOVE mode, hold and drag a single schematic to see its outlined floating preview. Drop it on an empty slot to move it, or on an occupied slot to open the swap confirmation. A selected group can also be left-dragged; its preview wraps the selected schematics and retains their spacing. Dropping outside the schematic slots leaves everything unchanged.
 
 The selected slot is highlighted. You can switch category tabs while a slot is selected to move a schematic across categories. Use **Settings > Extended UI > Show diagnostic log messages** to control detailed `[Drag from Scheme Table]` messages; errors and warnings remain visible when this option is off.
 
