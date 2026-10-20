@@ -10,7 +10,10 @@ This script mod adds schematic move and delete controls and library-to-table dra
 ## Use
 
 Click the **MOVE** button.
+
+
 <img width="428" height="443" alt="image" src="https://github.com/user-attachments/assets/1e44d543-91a8-4875-bbaf-6d93f63e6adb" />
+
 
 Click on a schematic to select it, click again in the slot you want it to go. Swapping between schematics works too. For bulk selection, Right-click when Move is on. Same for Delete. If the slots you are working with are occupied, you will be asked before proceeding. If you don't read don't blame the mod: It's your own fault.
 
