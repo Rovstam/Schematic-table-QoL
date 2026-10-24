@@ -16,6 +16,7 @@ function create(operations) {
     let singleMoveIndex = -1;
     let cachedGrid;
     let cachedBounds = [];
+    let overlayTracePending = false;
     const moveSlots = [];
     const deleteSlots = [];
 
@@ -31,6 +32,7 @@ function create(operations) {
     }
 
     function notify(mode) {
+        overlayTracePending = slotsFor(mode).length > 0;
         if (onSelectionChanged != null) onSelectionChanged(mode, slotsFor(mode).slice());
     }
 
@@ -309,13 +311,18 @@ function create(operations) {
         };
     }
 
-    function drawRectangle(rectangle, backColor, frontColor, offsetX, offsetY) {
+    function drawRectangle(rectangle, backColor, frontColor, offsetX, offsetY,
+        trace, key) {
         if (rectangle == null) return;
         const x = offsetX + rectangle.left;
         const y = offsetY + rectangle.bottom;
         const width = rectangle.right - rectangle.left;
         const height = rectangle.top - rectangle.bottom;
 
+        if (trace) operations.log("Bulk highlight Lines.rect args: key=" + key +
+            ", outer=(" + (x - 1) + "," + (y - 1) + "," +
+            (width + 2) + "," + (height + 2) + "), inner=(" +
+            x + "," + y + "," + width + "," + height + ").");
         Lines.stroke(2);
         Draw.color(backColor);
         Lines.rect(x - 1, y - 1, width + 2, height + 2);
@@ -324,9 +331,48 @@ function create(operations) {
     }
 
     function drawOverlay() {
-        if (table == null || buttons.length === 0) return;
+        const trace = overlayTracePending;
+        if (trace) {
+            overlayTracePending = false;
+            operations.log("Bulk highlight trace BEGIN: mode=" + currentMode +
+                ", category=" + currentCategory +
+                ", selectedCount=" + slotsFor(currentMode).length +
+                ", overlayParentIsTable=" +
+                (overlay != null && overlay.parent === table) +
+                ", overlayPosition=(" + (overlay == null ? "null" : overlay.x) +
+                "," + (overlay == null ? "null" : overlay.y) +
+                "), overlaySize=(" + (overlay == null ? "null" : overlay.getWidth()) +
+                "," + (overlay == null ? "null" : overlay.getHeight()) +
+                "), overlayZIndex=" + (overlay == null ? "null" : overlay.getZIndex()) +
+                ", tablePosition=(" + (table == null ? "null" : table.x) + "," +
+                (table == null ? "null" : table.y) + "), tableSize=(" +
+                (table == null ? "null" : table.getWidth()) + "," +
+                (table == null ? "null" : table.getHeight()) +
+                "), tableChildCount=" +
+                (table == null ? "null" : table.getChildren().size) +
+                ", slotContainer=" +
+                (buttons.length === 0 || buttons[0].parent == null
+                    ? "null"
+                    : String(buttons[0].parent.getClass().getName()) +
+                        "@" + buttons[0].parent.getZIndex()) +
+                ", wrappedContainer=" +
+                (buttons.length === 0 || buttons[0].parent == null ||
+                    buttons[0].parent.parent == null
+                    ? "null"
+                    : String(buttons[0].parent.parent.getClass().getName()) +
+                        "@" + buttons[0].parent.parent.getZIndex()) + ".");
+        }
+        if (table == null || buttons.length === 0) {
+            if (trace) operations.log("Bulk highlight trace COMPLETE: skipped=" +
+                (table == null ? "table-unavailable" : "no-slot-buttons") + ".");
+            return;
+        }
         const mode = currentMode;
-        if (mode !== "move" && mode !== "delete") return;
+        if (mode !== "move" && mode !== "delete") {
+            if (trace) operations.log("Bulk highlight trace COMPLETE: skipped=" +
+                "inactive-mode, mode=" + mode + ".");
+            return;
+        }
 
         const backColor = mode === "move" ? Pal.accentBack : Pal.sapBulletBack;
         const frontColor = mode === "move" ? Pal.accent : Pal.sapBullet;
@@ -341,8 +387,12 @@ function create(operations) {
             lastRectangle.category === currentCategory;
         const selection = slotsFor(mode);
         let drewOutline = false;
+        let selectedBordersDrawn = 0;
+        let selectedLinesRectCalls = 0;
 
         if (activeRectangleVisible) {
+            if (trace) operations.log("Bulk highlight active rectangle: " +
+                formatRectangle(activeSelection.rectangle) + ".");
             drawRectangle(
                 activeSelection.rectangle,
                 backColor,
@@ -353,6 +403,8 @@ function create(operations) {
             drewOutline = true;
         }
         if (persistentRectangleVisible) {
+            if (trace) operations.log("Bulk highlight persistent rectangle: " +
+                formatRectangle(lastRectangle.rectangle) + ".");
             drawRectangle(
                 lastRectangle.rectangle,
                 backColor,
@@ -362,11 +414,34 @@ function create(operations) {
             );
             drewOutline = true;
         }
-        for (let i = 0; i < selection.length; i++) {
-            const slot = selection[i];
+        for (var i = 0; i < selection.length; i++) {
+            var selectedIndex = i;
+            var slot = selection[selectedIndex];
+            if (trace) {
+                operations.log("Bulk highlight selected slot: selectionIndex=" + i +
+                    ", index=" + slot.index + ", key=" + slot.key +
+                    ", category=" + slot.category +
+                    ", bounds=" + formatRectangle(cachedBounds[slot.index]) +
+                    ", included=" + (slot.category === currentCategory &&
+                        slot.index >= 0 && slot.index < cachedBounds.length) + ".");
+            }
             if (slot.category !== currentCategory ||
                 slot.index < 0 || slot.index >= cachedBounds.length) continue;
-            drawRectangle(cachedBounds[slot.index], backColor, frontColor, offsetX, offsetY);
+            if (trace) operations.log("Bulk highlight border draw: selectionIndex=" +
+                i + ", key=" + slot.key + ", rectangle=" +
+                formatRectangle(cachedBounds[slot.index]) +
+                ", drawOrigin=(" + offsetX + "," + offsetY + ").");
+            drawRectangle(
+                cachedBounds[slot.index],
+                backColor,
+                frontColor,
+                offsetX,
+                offsetY,
+                trace,
+                slot.key
+            );
+            selectedBordersDrawn++;
+            selectedLinesRectCalls += 2;
             drewOutline = true;
         }
         if (mode === "move" && singleMoveIndex >= 0 &&
@@ -391,6 +466,11 @@ function create(operations) {
             }
         }
         if (drewOutline) Draw.reset();
+        if (trace) operations.log("Bulk highlight trace COMPLETE: mode=" + mode +
+            ", selectedBordersDrawn=" + selectedBordersDrawn +
+            ", selectedLinesRectCalls=" + selectedLinesRectCalls +
+            ", activeRectangleDrawn=" + activeRectangleVisible +
+            ", persistentRectangleDrawn=" + persistentRectangleVisible + ".");
     }
 
     function installOverlay() {
@@ -706,7 +786,7 @@ function create(operations) {
         operations.log("Moved " + moves.length + " selected schematics as a group.");
     }
 
-    function moveSelected(category, destinationIndex, slotColumns, rowCount) {
+    function moveSelected(category, destinationIndex, slotColumns, rowCount, anchorKey) {
         const selection = moveSlots.slice();
         if (selection.length === 0) return;
         const sourceDescriptions = [];
@@ -721,16 +801,34 @@ function create(operations) {
 
         let minColumn = slotColumns;
         let minRow = rowCount;
+        let anchorColumn;
+        let anchorRow;
+        let anchorFound = false;
         const sourceKeys = Object.create(null);
         const targetKeys = Object.create(null);
         const moves = [];
         const overwrittenNames = [];
 
-        for (let i = 0; i < selection.length; i++) {
-            minColumn = Math.min(minColumn, selection[i].column);
-            minRow = Math.min(minRow, selection[i].row);
-            markMoveSource(sourceKeys, selection[i]);
+        for (var i = 0; i < selection.length; i++) {
+            var sourceIndex = i;
+            var source = selection[sourceIndex];
+            minColumn = Math.min(minColumn, source.column);
+            minRow = Math.min(minRow, source.row);
+            markMoveSource(sourceKeys, source);
+            if (anchorKey != null && source.key === anchorKey) {
+                anchorColumn = source.column;
+                anchorRow = source.row;
+                anchorFound = true;
+            }
         }
+
+        if (anchorColumn == null || anchorRow == null) {
+            anchorColumn = minColumn;
+            anchorRow = minRow;
+        }
+        operations.log("Bulk move destination anchor: key=" +
+            (anchorFound ? anchorKey : "top-left") +
+            ", cell=(" + anchorColumn + "," + anchorRow + ").");
 
         const destinationColumn = destinationIndex % slotColumns;
         const destinationRow = Math.floor(destinationIndex / slotColumns);
@@ -740,8 +838,8 @@ function create(operations) {
                 overwrittenNames,
                 selection[i],
                 category,
-                minColumn,
-                minRow,
+                anchorColumn,
+                anchorRow,
                 destinationColumn,
                 destinationRow,
                 slotColumns,
@@ -817,8 +915,9 @@ function create(operations) {
         let minRow = buttons.length;
         let maxColumn = -1;
         let maxRow = -1;
-        for (let i = 0; i < moveSlots.length; i++) {
-            const slot = moveSlots[i];
+        for (var i = 0; i < moveSlots.length; i++) {
+            var footprintIndex = i;
+            var slot = moveSlots[footprintIndex];
             minColumn = Math.min(minColumn, slot.column);
             minRow = Math.min(minRow, slot.row);
             maxColumn = Math.max(maxColumn, slot.column);

@@ -23,6 +23,8 @@ https://github.com/user-attachments/assets/3ab606bc-a216-4b56-b3a4-97b2b77aa0e8
 
 Moves preserve a slot's custom image. Empty destinations receive a move and leave the source empty; occupied destinations are swapped after confirmation. Use **Settings > Extended UI > Skip schematic swap confirmations** to persistently control the confirmation popup. Dismissing a swap popup leaves the source selected and highlighted. The selected source remains pending until a move or swap succeeds, or MOVE mode is turned off. In normal mode, schematic slots show their outline on hover only; clicking a schematic to use it does not leave a selection outline behind.
 
+For bulk moves, drag a selected schematic and drop it on the destination slot. The dragged schematic anchors the placement, while the other selected schematics keep their relative positions.
+
 
 ## Insert from the schematic library
 

@@ -903,8 +903,9 @@ function updateBulkDragPreview(stageX, stageY) {
         preview.touchable = Packages.arc.scene.event.Touchable.disabled;
         preview.setSize(previewWidth, previewHeight);
 
-        for (let i = 0; i < footprint.slots.length; i++) {
-            const slot = footprint.slots[i];
+        for (var i = 0; i < footprint.slots.length; i++) {
+            var previewSlotIndex = i;
+            var slot = footprint.slots[previewSlotIndex];
             const sourceButton = boundSlotButtons[slot.index];
             const image = sourceButton.getImage();
             const drawable = image == null ? null : image.getDrawable();
@@ -936,10 +937,10 @@ function updateBulkDragPreview(stageX, stageY) {
                 const height = this.getHeight();
                 Lines.stroke(4);
                 Draw.color(Pal.accentBack);
-                Lines.rect(this.x + width / 2, this.y + height / 2, width + 2, height + 2);
+                Lines.rect(this.x - 1, this.y - 1, width + 2, height + 2);
                 Lines.stroke(2);
                 Draw.color(Pal.accent);
-                Lines.rect(this.x + width / 2, this.y + height / 2, width, height);
+                Lines.rect(this.x, this.y, width, height);
                 Draw.reset();
             }
         });
@@ -1422,12 +1423,13 @@ function finishDrag(drag, stageX, stageY) {
     }
 }
 
-function moveSelectedSchematics(category, destinationIndex, columns) {
+function moveSelectedSchematics(category, destinationIndex, columns, anchorKey) {
     bulkSelection.moveSelected(
         category,
         destinationIndex,
         columns,
-        Math.ceil(boundSlotButtons.length / columns)
+        Math.ceil(boundSlotButtons.length / columns),
+        anchorKey
     );
     selectedSlot = null;
 }
@@ -1773,15 +1775,22 @@ function bindTableButtons(table) {
                 }
                 if (activeBulkDrag != null && activeBulkDrag.pointer === pointer) {
                     event.stop();
+                    const drag = activeBulkDrag;
                     const destination = findDropTarget(event.stageX, event.stageY);
                     clearBulkDragPreview();
                     activeBulkDrag = null;
                     if (destination >= 0) {
                         dbg("Dropping selected schematic group at slot " + destination + ".");
+                        const anchorKey = slotKey(
+                            getSelectedCategory(boundCategoryButtons),
+                            drag.index,
+                            boundColumns
+                        );
                         moveSelectedSchematics(
                             getSelectedCategory(boundCategoryButtons),
                             destination,
-                            boundColumns
+                            boundColumns,
+                            anchorKey
                         );
                     } else {
                         dbg("Bulk group drag ended outside a schematic slot; no changes made.");
