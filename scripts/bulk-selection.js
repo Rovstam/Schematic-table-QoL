@@ -786,7 +786,7 @@ function create(operations) {
         operations.log("Moved " + moves.length + " selected schematics as a group.");
     }
 
-    function moveSelected(category, destinationIndex, slotColumns, rowCount) {
+    function moveSelected(category, destinationIndex, slotColumns, rowCount, anchorKey) {
         const selection = moveSlots.slice();
         if (selection.length === 0) return;
         const sourceDescriptions = [];
@@ -801,16 +801,34 @@ function create(operations) {
 
         let minColumn = slotColumns;
         let minRow = rowCount;
+        let anchorColumn;
+        let anchorRow;
+        let anchorFound = false;
         const sourceKeys = Object.create(null);
         const targetKeys = Object.create(null);
         const moves = [];
         const overwrittenNames = [];
 
-        for (let i = 0; i < selection.length; i++) {
-            minColumn = Math.min(minColumn, selection[i].column);
-            minRow = Math.min(minRow, selection[i].row);
-            markMoveSource(sourceKeys, selection[i]);
+        for (var i = 0; i < selection.length; i++) {
+            var sourceIndex = i;
+            var source = selection[sourceIndex];
+            minColumn = Math.min(minColumn, source.column);
+            minRow = Math.min(minRow, source.row);
+            markMoveSource(sourceKeys, source);
+            if (anchorKey != null && source.key === anchorKey) {
+                anchorColumn = source.column;
+                anchorRow = source.row;
+                anchorFound = true;
+            }
         }
+
+        if (anchorColumn == null || anchorRow == null) {
+            anchorColumn = minColumn;
+            anchorRow = minRow;
+        }
+        operations.log("Bulk move destination anchor: key=" +
+            (anchorFound ? anchorKey : "top-left") +
+            ", cell=(" + anchorColumn + "," + anchorRow + ").");
 
         const destinationColumn = destinationIndex % slotColumns;
         const destinationRow = Math.floor(destinationIndex / slotColumns);
@@ -820,8 +838,8 @@ function create(operations) {
                 overwrittenNames,
                 selection[i],
                 category,
-                minColumn,
-                minRow,
+                anchorColumn,
+                anchorRow,
                 destinationColumn,
                 destinationRow,
                 slotColumns,

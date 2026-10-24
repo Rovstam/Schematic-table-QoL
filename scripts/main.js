@@ -1423,12 +1423,13 @@ function finishDrag(drag, stageX, stageY) {
     }
 }
 
-function moveSelectedSchematics(category, destinationIndex, columns) {
+function moveSelectedSchematics(category, destinationIndex, columns, anchorKey) {
     bulkSelection.moveSelected(
         category,
         destinationIndex,
         columns,
-        Math.ceil(boundSlotButtons.length / columns)
+        Math.ceil(boundSlotButtons.length / columns),
+        anchorKey
     );
     selectedSlot = null;
 }
@@ -1774,15 +1775,22 @@ function bindTableButtons(table) {
                 }
                 if (activeBulkDrag != null && activeBulkDrag.pointer === pointer) {
                     event.stop();
+                    const drag = activeBulkDrag;
                     const destination = findDropTarget(event.stageX, event.stageY);
                     clearBulkDragPreview();
                     activeBulkDrag = null;
                     if (destination >= 0) {
                         dbg("Dropping selected schematic group at slot " + destination + ".");
+                        const anchorKey = slotKey(
+                            getSelectedCategory(boundCategoryButtons),
+                            drag.index,
+                            boundColumns
+                        );
                         moveSelectedSchematics(
                             getSelectedCategory(boundCategoryButtons),
                             destination,
-                            boundColumns
+                            boundColumns,
+                            anchorKey
                         );
                     } else {
                         dbg("Bulk group drag ended outside a schematic slot; no changes made.");
