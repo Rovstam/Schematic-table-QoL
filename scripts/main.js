@@ -903,8 +903,9 @@ function updateBulkDragPreview(stageX, stageY) {
         preview.touchable = Packages.arc.scene.event.Touchable.disabled;
         preview.setSize(previewWidth, previewHeight);
 
-        for (let i = 0; i < footprint.slots.length; i++) {
-            const slot = footprint.slots[i];
+        for (var i = 0; i < footprint.slots.length; i++) {
+            var previewSlotIndex = i;
+            var slot = footprint.slots[previewSlotIndex];
             const sourceButton = boundSlotButtons[slot.index];
             const image = sourceButton.getImage();
             const drawable = image == null ? null : image.getDrawable();
@@ -936,10 +937,10 @@ function updateBulkDragPreview(stageX, stageY) {
                 const height = this.getHeight();
                 Lines.stroke(4);
                 Draw.color(Pal.accentBack);
-                Lines.rect(this.x + width / 2, this.y + height / 2, width + 2, height + 2);
+                Lines.rect(this.x - 1, this.y - 1, width + 2, height + 2);
                 Lines.stroke(2);
                 Draw.color(Pal.accent);
-                Lines.rect(this.x + width / 2, this.y + height / 2, width, height);
+                Lines.rect(this.x, this.y, width, height);
                 Draw.reset();
             }
         });
